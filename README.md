@@ -1,6 +1,7 @@
 # Book Examples
 
 * [Android Programming: The Big Nerd Ranch Guide, 3rd Edition](https://www.bignerdranch.com/books/android-programming/)
+* [Efficient Android Threading: Asynchronous Processing Techniques for Android Applications](http://shop.oreilly.com/product/0636920029397.do)
 * [Grokking Algorithms](https://www.manning.com/books/grokking-algorithms)
 * [Kotlin in Action](https://www.manning.com/books/kotlin-in-action)
 * [Learning RxJava](https://www.packtpub.com/application-development/learning-rxjava)
