@@ -3,6 +3,7 @@
 * [Android Programming: The Big Nerd Ranch Guide, 3rd Edition](https://www.bignerdranch.com/books/android-programming/)
 * [Efficient Android Threading: Asynchronous Processing Techniques for Android Applications](http://shop.oreilly.com/product/0636920029397.do)
 * [Grokking Algorithms](https://www.manning.com/books/grokking-algorithms)
+* [Hacker's Delight, 2nd Edition](http://www.hackersdelight.org/)
 * [Kotlin in Action](https://www.manning.com/books/kotlin-in-action)
 * [Learning RxJava](https://www.packtpub.com/application-development/learning-rxjava)
 * [Mastering Rust](https://www.packtpub.com/application-development/mastering-rust)
