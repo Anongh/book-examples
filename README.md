@@ -11,6 +11,7 @@
 * [Learning RxJava](https://www.packtpub.com/application-development/learning-rxjava)
 * [Mastering Rust](https://www.packtpub.com/application-development/mastering-rust)
 * [Python Crash Course: A Hands-On, Project-Based Introduction to Programming](https://nostarch.com/pythoncrashcourse)
+* [RxJava 프로그래밍](http://www.hanbit.co.kr/store/books/look.php?p_code=B3448548347)
 * [Rust Cookbook](https://www.packtpub.com/application-development/rust-cookbook)
 * [Thinking in Java](http://mindview.net/Books/TIJ4)
 * [Voice Application Development for Android](https://www.packtpub.com/application-development/voice-application-development-android/)
