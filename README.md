@@ -4,6 +4,7 @@
 * [C++ Concurrency in Action: Practical Multithreading](https://www.manning.com/books/c-plus-plus-concurrency-in-action)
 * [C++ Templates: The Complete Guide, 2nd Edition](http://www.tmplbook.com/)
 * [Efficient Android Threading: Asynchronous Processing Techniques for Android Applications](http://shop.oreilly.com/product/0636920029397.do)
+* [Functional Programming for Java Developers](http://shop.oreilly.com/product/0636920021667.do)
 * [Grokking Algorithms](https://www.manning.com/books/grokking-algorithms)
 * [Hacker's Delight, 2nd Edition](http://www.hackersdelight.org/)
 * [Java Puzzlers: Traps, Pitfalls, and Corner Cases](http://www.javapuzzlers.com/)
