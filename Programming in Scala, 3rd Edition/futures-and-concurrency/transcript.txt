@@ -1,0 +1,371 @@
+/*
+ * Copyright (C) 2007-2016 Artima, Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Automatically generated Scala interpreter transcript from:
+ *
+ * Programming in Scala (Third Edition)
+ * by Martin Odersky, Lex Spoon, Bill Venners
+ *
+ * http://booksites.artima.com/programming_in_scala_3ed
+ */
+
+
+scala> import scala.concurrent.Future
+import scala.concurrent.Future
+
+scala> val fut = Future { Thread.sleep(10000); 21 + 21 }
+<console>:8: error: Cannot find an implicit ExecutionContext. You might pass
+an (implicit ec: ExecutionContext) parameter to your method
+or import scala.concurrent.ExecutionContext.Implicits.global.
+       val fut = Future { Thread.sleep(10000); 21 + 21 }
+                        ^
+
+scala> import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.ExecutionContext.Implicits.global
+
+scala> val fut = Future { Thread.sleep(10000); 21 + 21 }
+fut: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@2174e7c2
+
+scala> fut.isCompleted
+res0: Boolean = false
+
+scala> fut.value
+res1: Option[scala.util.Try[Int]] = None
+
+scala> fut.isCompleted
+res2: Boolean = false
+
+scala> fut.value
+res3: Option[scala.util.Try[Int]] = None
+
+scala> val fut = Future { Thread.sleep(10000); 21 / 0 }
+fut: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@453d36ad
+
+scala> fut.value
+res4: Option[scala.util.Try[Int]] = None
+
+scala> fut.value
+res5: Option[scala.util.Try[Int]] = None
+
+scala> val fut = Future { Thread.sleep(10000); 21 + 21 }
+fut: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@2cac2b2c
+
+scala> val result = fut.map(x => x + 1)
+result: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@6d3c6012
+
+scala> result.value
+res6: Option[scala.util.Try[Int]] = None
+
+scala> for {
+
+scala> res7.value
+<console>:10: error: recursive value res7 needs type
+              res7.value
+              ^
+
+scala> for {
+
+scala> res9.value
+<console>:10: error: not found: value res9
+              res9.value
+              ^
+
+scala> // Will need at least 20 seconds to complete
+
+scala> res9.value
+<console>:10: error: not found: value res9
+              res9.value
+              ^
+
+scala> val pro = Promise[Int]
+<console>:9: error: not found: value Promise
+       val pro = Promise[Int]
+                 ^
+
+scala> val fut = pro.future
+<console>:9: error: not found: value pro
+       val fut = pro.future
+                 ^
+
+scala> fut.value
+res11: Option[scala.util.Try[Int]] = None
+
+scala> pro.success(42)
+<console>:10: error: not found: value pro
+              pro.success(42)
+              ^
+
+scala> fut.value
+res13: Option[scala.util.Try[Int]] = None
+
+scala> val fut = Future { 42 }
+fut: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@6b136442
+
+scala> val valid = fut.filter(res => res > 0)
+valid: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@5a44adf8
+
+scala> valid.value
+res14: Option[scala.util.Try[Int]] = Some(Success(42))
+
+scala> val invalid = fut.filter(res => res < 0)
+invalid: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@5d10686f
+
+scala> invalid.value
+res15: Option[scala.util.Try[Int]] = Some(Failure(java.util.NoSuchElementException: Future.filter predicate is not satisfied))
+
+scala> val valid = for (res <- fut if res > 0) yield res
+valid: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@6a81c750
+
+scala> valid.value
+res16: Option[scala.util.Try[Int]] = Some(Success(42))
+
+scala> val invalid = for (res <- fut if res < 0) yield res
+invalid: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@17b4b780
+
+scala> invalid.value
+res17: Option[scala.util.Try[Int]] = Some(Failure(java.util.NoSuchElementException: Future.filter predicate is not satisfied))
+
+scala> val valid =
+
+scala> valid.value
+res18: Option[scala.util.Try[Int]] = Some(Success(42))
+
+scala> val invalid =
+
+scala> invalid.value
+res19: Option[scala.util.Try[Int]] = Some(Failure(java.util.NoSuchElementException: Future.filter predicate is not satisfied))
+
+scala> val failure = Future { 42 / 0 }
+failure: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@7d42a64e
+
+scala> failure.value
+res20: Option[scala.util.Try[Int]] = Some(Failure(java.lang.ArithmeticException: / by zero))
+
+scala> val expectedFailure = failure.failed
+expectedFailure: scala.concurrent.Future[Throwable] = scala.concurrent.impl.Promise$DefaultPromise@59f7817e
+
+scala> expectedFailure.value
+res21: Option[scala.util.Try[Throwable]] = Some(Success(java.lang.ArithmeticException: / by zero))
+
+scala> val success = Future { 42 / 1 }
+success: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@632ac433
+
+scala> success.value
+res22: Option[scala.util.Try[Int]] = Some(Success(42))
+
+scala> val unexpectedSuccess = success.failed
+unexpectedSuccess: scala.concurrent.Future[Throwable] = scala.concurrent.impl.Promise$DefaultPromise@5e4da34e
+
+scala> unexpectedSuccess.value
+res23: Option[scala.util.Try[Throwable]] = Some(Failure(java.util.NoSuchElementException: Future.failed not completed with a throwable.))
+
+scala> val fallback = failure.fallbackTo(success)
+fallback: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@39dae9ba
+
+scala> fallback.value
+res24: Option[scala.util.Try[Int]] = Some(Success(42))
+
+scala> val failedFallback = failure.fallbackTo(
+
+scala> failedFallback.value
+<console>:10: error: not found: value failedFallback
+              failedFallback.value
+              ^
+
+scala> val recovered = failedFallback recover {
+
+scala> recovered.value
+<console>:10: error: not found: value recovered
+              recovered.value
+              ^
+
+scala> val unrecovered = fallback recover {
+
+scala> unrecovered.value
+<console>:10: error: not found: value unrecovered
+              unrecovered.value
+              ^
+
+scala> val alsoUnrecovered = failedFallback recover {
+
+scala> alsoUnrecovered.value
+<console>:10: error: not found: value alsoUnrecovered
+              alsoUnrecovered.value
+              ^
+
+scala> val alsoRecovered = failedFallback recoverWith {
+
+scala> alsoRecovered.value
+<console>:10: error: not found: value alsoRecovered
+              alsoRecovered.value
+              ^
+
+scala> val first = success.transform(
+
+scala> first.value
+<console>:10: error: not found: value first
+              first.value
+              ^
+
+scala> val second = failure.transform(
+
+scala> second.value
+<console>:10: error: not found: value second
+              second.value
+              ^
+
+scala> val firstCase = success.transform { // Scala 2.12
+
+scala> firstCase.value
+<console>:10: error: not found: value firstCase
+              firstCase.value
+              ^
+
+scala> val secondCase = failure.transform {
+
+scala> secondCase.value
+<console>:10: error: not found: value secondCase
+              secondCase.value
+              ^
+
+scala> val nonNegative = failure.transform { // Scala 2.12
+
+scala> nonNegative.value
+<console>:10: error: not found: value nonNegative
+              nonNegative.value
+              ^
+
+scala> val zippedSuccess = success zip recovered
+<console>:10: error: not found: value recovered
+       val zippedSuccess = success zip recovered
+                                       ^
+
+scala> zippedSuccess.value
+<console>:10: error: not found: value zippedSuccess
+              zippedSuccess.value
+              ^
+
+scala> val zippedFailure = success zip failure
+zippedFailure: scala.concurrent.Future[(Int, Int)] = scala.concurrent.impl.Promise$DefaultPromise@5b99719b
+
+scala> zippedFailure.value
+res36: Option[scala.util.Try[(Int, Int)]] = Some(Failure(java.lang.ArithmeticException: / by zero))
+
+scala> val fortyTwo = Future { 21 + 21 }
+fortyTwo: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@49ea52ee
+
+scala> val fortySix = Future { 23 + 23 }
+fortySix: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@5b9fa3b0
+
+scala> val futureNums = List(fortyTwo, fortySix)
+futureNums: List[scala.concurrent.Future[Int]] = List(scala.concurrent.impl.Promise$DefaultPromise@49ea52ee, scala.concurrent.impl.Promise$DefaultPromise@5b9fa3b0)
+
+scala> val folded =
+
+scala> folded.value
+<console>:10: error: not found: value folded
+              folded.value
+              ^
+
+scala> val reduced =
+
+scala> reduced.value
+<console>:10: error: not found: value reduced
+              reduced.value
+              ^
+
+scala> val futureList = Future.sequence(futureNums)
+futureList: scala.concurrent.Future[List[Int]] = scala.concurrent.impl.Promise$DefaultPromise@307587c
+
+scala> futureList.value
+res39: Option[scala.util.Try[List[Int]]] = Some(Success(List(42, 46)))
+
+scala> val traversed =
+
+scala> traversed.value
+<console>:10: error: not found: value traversed
+              traversed.value
+              ^
+
+scala> failure.foreach(ex => println(ex))
+
+scala> success.foreach(res => println(res))
+42
+
+scala> for (res <- failure) println(res)
+
+scala> for (res <- success) println(res)
+42
+
+scala> import scala.util.{Success, Failure}
+import scala.util.{Success, Failure}
+
+scala> success onComplete {
+
+scala> failure onComplete {
+
+scala> val newFuture = success andThen {
+
+scala> newFuture.value
+<console>:11: error: not found: value newFuture
+              newFuture.value
+              ^
+
+scala> import scala.concurrent.Await
+import scala.concurrent.Await
+
+scala> import scala.concurrent.duration._
+import scala.concurrent.duration._
+
+scala> val fut = Future { Thread.sleep(10000); 21 + 21 }
+fut: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@7fa21479
+
+scala> val x = Await.result(fut, 15.seconds) // blocks
+x: Int = 42
+
+scala> import org.scalatest.Matchers._
+<console>:14: error: object scalatest is not a member of package org
+       import org.scalatest.Matchers._
+                  ^
+
+scala> x should be (42)
+<console>:17: error: value should is not a member of Int
+              x should be (42)
+                ^
+<console>:17: error: not found: value be
+              x should be (42)
+                       ^
+
+scala> import org.scalatest.concurrent.ScalaFutures._
+<console>:14: error: object scalatest is not a member of package org
+       import org.scalatest.concurrent.ScalaFutures._
+                  ^
+
+scala> val fut = Future { Thread.sleep(10000); 21 + 21 }
+fut: scala.concurrent.Future[Int] = scala.concurrent.impl.Promise$DefaultPromise@381836f5
+
+scala> fut.futureValue should be (42) // futureValue blocks
+<console>:16: error: value futureValue is not a member of scala.concurrent.Future[Int]
+              fut.futureValue should be (42) // futureValue blocks
+                  ^
+<console>:16: error: not found: value be
+              fut.futureValue should be (42) // futureValue blocks
+                                     ^
+
+scala> NameResolver ! "EXIT"; Thread.sleep(500)
+<console>:14: error: not found: value NameResolver
+              NameResolver ! "EXIT";;
+              ^
+

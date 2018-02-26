@@ -11,6 +11,7 @@
 * [Kotlin in Action](https://www.manning.com/books/kotlin-in-action)
 * [Learning RxJava](https://www.packtpub.com/application-development/learning-rxjava)
 * [Mastering Rust](https://www.packtpub.com/application-development/mastering-rust)
+* [Programming in Scala, 3rd Edition](https://booksites.artima.com/programming_in_scala_3ed)
 * [Python Crash Course: A Hands-On, Project-Based Introduction to Programming](https://nostarch.com/pythoncrashcourse)
 * [RxJava 프로그래밍](http://www.hanbit.co.kr/store/books/look.php?p_code=B3448548347)
 * [Rust Cookbook](https://www.packtpub.com/application-development/rust-cookbook)

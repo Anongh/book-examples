@@ -1,0 +1,314 @@
+/*
+ * Copyright (C) 2007-2016 Artima, Inc. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Automatically generated Scala interpreter transcript from:
+ *
+ * Programming in Scala (Third Edition)
+ * by Martin Odersky, Lex Spoon, Bill Venners
+ *
+ * http://booksites.artima.com/programming_in_scala_3ed
+ */
+
+
+scala>   import scala.util.parsing.combinator._
+       
+         class Arith extends JavaTokenParsers {   
+           def expr: Parser[Any] = term~rep("+"~term | "-"~term)
+           def term: Parser[Any] = factor~rep("*"~factor | "/"~factor)
+           def factor: Parser[Any] = floatingPointNumber | "("~expr~")"
+         }
+
+<console>:7: error: object parsing is not a member of package util
+         import scala.util.parsing.combinator._
+                           ^
+<console>:9: error: not found: type JavaTokenParsers
+                class Arith extends JavaTokenParsers {
+                                    ^
+<console>:10: error: not found: type Parser
+                  def expr: Parser[Any] = term~rep("+"~term | "-"~term)
+                            ^
+<console>:11: error: not found: type Parser
+                  def term: Parser[Any] = factor~rep("*"~factor | "/"~factor)
+                            ^
+<console>:12: error: not found: type Parser
+                  def factor: Parser[Any] = floatingPointNumber | "("~expr~")"
+                              ^
+<console>:12: error: not found: value floatingPointNumber
+                  def factor: Parser[Any] = floatingPointNumber | "("~expr~")"
+                                            ^
+<console>:12: error: value ~ is not a member of String
+                  def factor: Parser[Any] = floatingPointNumber | "("~expr~")"
+                                                                     ^
+
+scala>   object ParseExpr extends Arith {
+           def main(args: Array[String]) = {
+             println("input : " + args(0))
+             println(parseAll(expr, args(0)))
+           }
+         }
+
+<console>:7: error: not found: type Arith
+         object ParseExpr extends Arith {
+                                  ^
+<console>:10: error: not found: value parseAll
+                    println(parseAll(expr, args(0)))
+                            ^
+<console>:10: error: not found: value expr
+                    println(parseAll(expr, args(0)))
+                                     ^
+
+scala> ParseExpr.main(Array("2 * (3 + 7)"))
+<console>:8: error: not found: value ParseExpr
+              ParseExpr.main(Array("2 * (3 + 7)"))
+              ^
+
+scala> ParseExpr.main(Array("2 * (3 + 7))"))
+<console>:8: error: not found: value ParseExpr
+              ParseExpr.main(Array("2 * (3 + 7))"))
+              ^
+
+scala> import scala.util.parsing.combinator._
+       
+       class JSON extends JavaTokenParsers {   
+       
+         def value : Parser[Any] = obj | arr | 
+                                   stringLiteral | 
+                                   floatingPointNumber | 
+                                   "null" | "true" | "false"
+       
+         def obj   : Parser[Any] = "{"~repsep(member, ",")~"}"
+       
+         def arr   : Parser[Any] = "["~repsep(value, ",")~"]"
+       
+         def member: Parser[Any] = stringLiteral~":"~value
+       }
+
+         import java.io.FileReader
+       
+         object ParseJSON extends JSON {
+           def main(args: Array[String]) = {
+             val reader = new FileReader(args(0))
+             println(parseAll(value, reader))
+           }
+         }
+
+<console>:7: error: object parsing is not a member of package util
+       import scala.util.parsing.combinator._
+                         ^
+<console>:9: error: not found: type JavaTokenParsers
+              class JSON extends JavaTokenParsers {
+                                 ^
+<console>:11: error: not found: type Parser
+                def value : Parser[Any] = obj | arr |
+                            ^
+<console>:16: error: not found: type Parser
+                def obj   : Parser[Any] = "{"~repsep(member, ",")~"}"
+                            ^
+<console>:20: error: not found: type Parser
+                def member: Parser[Any] = stringLiteral~":"~value
+                            ^
+<console>:16: error: value ~ is not a member of String
+                def obj   : Parser[Any] = "{"~repsep(member, ",")~"}"
+                                             ^
+<console>:16: error: not found: value repsep
+                def obj   : Parser[Any] = "{"~repsep(member, ",")~"}"
+                                              ^
+<console>:18: error: not found: type Parser
+                def arr   : Parser[Any] = "["~repsep(value, ",")~"]"
+                            ^
+<console>:18: error: value ~ is not a member of String
+                def arr   : Parser[Any] = "["~repsep(value, ",")~"]"
+                                             ^
+<console>:18: error: not found: value repsep
+                def arr   : Parser[Any] = "["~repsep(value, ",")~"]"
+                                              ^
+<console>:20: error: not found: value stringLiteral
+                def member: Parser[Any] = stringLiteral~":"~value
+                                          ^
+<console>:28: error: not found: value parseAll
+                    println(parseAll(value, reader))
+                            ^
+
+scala> val addressbook = """
+            {
+           "address book": {
+             "name": "John Smith",
+             "address": {
+               "street": "10 Market Street",
+               "city"  : "San Francisco, CA",
+               "zip"   : 94111
+             },
+             "phone numbers": [
+               "408 338-4238",
+               "408 111-6892"
+             ]
+           }
+         }
+
+       """.trim
+addressbook: String =
+{
+           "address book": {
+             "name": "John Smith",
+             "address": {
+               "street": "10 Market Street",
+               "city"  : "San Francisco, CA",
+               "zip"   : 94111
+             },
+             "phone numbers": [
+               "408 338-4238",
+               "408 111-6892"
+             ]
+           }
+         }
+
+scala> object ParseJSONShell extends JSON {
+       def main(str: String) = {
+         val reader = new java.io.StringReader(str)
+         println(parseAll(value, reader))
+       } }
+<console>:7: error: not found: type JSON
+       object ParseJSONShell extends JSON {
+                                     ^
+<console>:10: error: not found: value parseAll
+         println(parseAll(value, reader))
+                 ^
+<console>:10: error: not found: value value
+         println(parseAll(value, reader))
+                          ^
+
+scala> ParseJSONShell.main(addressbook)
+<console>:9: error: not found: value ParseJSONShell
+              ParseJSONShell.main(addressbook)
+              ^
+
+scala>   import scala.util.parsing.combinator._
+       
+         class JSON1 extends JavaTokenParsers {   
+       
+           def obj: Parser[Map[String, Any]] = 
+             "{"~> repsep(member, ",") <~"}" ^^ (Map() ++ _)
+       
+           def arr: Parser[List[Any]] =
+             "["~> repsep(value, ",") <~"]" 
+       
+           def member: Parser[(String, Any)] = 
+             stringLiteral~":"~value ^^ 
+               { case name~":"~value => (name, value) }
+       
+           def value: Parser[Any] = (
+             obj
+           | arr 
+           | stringLiteral
+           | floatingPointNumber ^^ (_.toDouble) 
+           | "null"  ^^ (x => null) 
+           | "true"  ^^ (x => true) 
+           | "false" ^^ (x => false)
+           )
+         }
+
+<console>:7: error: object parsing is not a member of package util
+         import scala.util.parsing.combinator._
+                           ^
+<console>:9: error: not found: type JavaTokenParsers
+                class JSON1 extends JavaTokenParsers {
+                                    ^
+<console>:11: error: not found: type Parser
+                  def obj: Parser[Map[String, Any]] =
+                           ^
+<console>:17: error: not found: type Parser
+                  def member: Parser[(String, Any)] =
+                              ^
+<console>:12: error: value ~> is not a member of String
+                    "{"~> repsep(member, ",") <~"}" ^^ (Map() ++ _)
+                       ^
+<console>:12: error: not found: value repsep
+                    "{"~> repsep(member, ",") <~"}" ^^ (Map() ++ _)
+                          ^
+<console>:14: error: not found: type Parser
+                  def arr: Parser[List[Any]] =
+                           ^
+<console>:21: error: not found: type Parser
+                  def value: Parser[Any] = (
+                             ^
+<console>:15: error: value ~> is not a member of String
+                    "["~> repsep(value, ",") <~"]"
+                       ^
+<console>:15: error: not found: value repsep
+                    "["~> repsep(value, ",") <~"]"
+                          ^
+<console>:18: error: not found: value stringLiteral
+                    stringLiteral~":"~value ^^
+                    ^
+<console>:19: error: not found: value ~
+                      { case name~":"~value => (name, value) }
+                                     ^
+<console>:19: error: not found: value ~
+                      { case name~":"~value => (name, value) }
+                                 ^
+
+scala> val addressbook = """
+            {
+           "address book": {
+             "name": "John Smith",
+             "address": {
+               "street": "10 Market Street",
+               "city"  : "San Francisco, CA",
+               "zip"   : 94111
+             },
+             "phone numbers": [
+               "408 338-4238",
+               "408 111-6892"
+             ]
+           }
+         }
+
+       """.trim
+addressbook: String =
+{
+           "address book": {
+             "name": "John Smith",
+             "address": {
+               "street": "10 Market Street",
+               "city"  : "San Francisco, CA",
+               "zip"   : 94111
+             },
+             "phone numbers": [
+               "408 338-4238",
+               "408 111-6892"
+             ]
+           }
+         }
+
+scala> object JSON1TestShell extends JSON1 {
+       def main(str: String) = {
+         val reader = new java.io.StringReader(str)
+         println(parseAll(value, reader))
+       } }
+<console>:7: error: not found: type JSON1
+       object JSON1TestShell extends JSON1 {
+                                     ^
+<console>:10: error: not found: value parseAll
+         println(parseAll(value, reader))
+                 ^
+<console>:10: error: not found: value value
+         println(parseAll(value, reader))
+                          ^
+
+scala> JSON1TestShell.main(addressbook)
+<console>:9: error: not found: value JSON1TestShell
+              JSON1TestShell.main(addressbook)
+              ^
+
