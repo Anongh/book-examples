@@ -8,6 +8,7 @@
 * [Functional Programming for Java Developers](http://shop.oreilly.com/product/0636920021667.do)
 * [Grokking Algorithms](https://www.manning.com/books/grokking-algorithms)
 * [Hacker's Delight, 2nd Edition](http://www.hackersdelight.org/)
+* [Head First Design Patterns](http://www.headfirstlabs.com/books/hfdp/)
 * [Java Puzzlers: Traps, Pitfalls, and Corner Cases](http://www.javapuzzlers.com/)
 * [Kotlin in Action](https://www.manning.com/books/kotlin-in-action)
 * [Learning RxJava](https://www.packtpub.com/application-development/learning-rxjava)
