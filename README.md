@@ -16,6 +16,7 @@
 * [Programming in Scala, 3rd Edition](https://booksites.artima.com/programming_in_scala_3ed)
 * [Programming Windows, 5th Edition](http://www.charlespetzold.com/pw5/)
 * [Programming Windows, 6th Edition](https://www.microsoftpressstore.com/store/programming-windows-9780735671713)
+* [Programming Windows with MFC, 2nd Edition](https://www.amazon.com/Programming-Windows-Second-Jeff-Prosise/dp/1572316950)
 * [Python Crash Course: A Hands-On, Project-Based Introduction to Programming](https://nostarch.com/pythoncrashcourse)
 * [RxJava 프로그래밍](http://www.hanbit.co.kr/store/books/look.php?p_code=B3448548347)
 * [Rust Cookbook](https://www.packtpub.com/application-development/rust-cookbook)
