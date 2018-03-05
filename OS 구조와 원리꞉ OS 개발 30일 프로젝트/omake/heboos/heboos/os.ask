@@ -1,0 +1,560 @@
+/* OS copyright(C) 2003 카와이 히데미, KL-01 */
+
+/* ASKA가 여러 가지 귀찮아서 먼저 써 둔다 */
+segment CODE(USE32, PARA);
+default(code == CODE);
+
+/* .COM 파일을 위한 기술 */
+void COMFILE()
+{
+	asmout("[BITS 16]");
+	ORG(0x0100);
+}
+
+void cls();
+void putstr();
+void scroll();
+void readsec();
+void loaddir();
+void syscall();
+void charfont();
+
+#define SEG_DIR		0x1000
+#define SEG_APP		0x2000
+
+void main()
+{
+	/* IPL을 위한 기술 */
+	goto skip;
+	DW(3072 / 512); /* OS 크기(512바이트 단위) */
+skip:
+
+	/* 화면 모드 설정 */
+	AX = 0x0013;
+	INT(0x10);
+
+	/* 팔레트 설정 */
+	/* 검정(0)과 흰색(15)밖에 사용하지 않기 때문에 그것 밖에 설정하고 있지 않다 */
+	AX = 0x1010;
+	BX = 0;
+	DH = 0;
+	CX = 0;
+	INT(0x10);
+	AX = 0x1010;
+	BX = 15;
+	DH = 0x3f;
+	CX = 0x3f3f;
+	INT(0x10);
+
+	/* 화면 초기화 */
+	cls();
+	asmout("MOV SI,. msg");
+	putstr();
+
+	/* 시스템 call용 INT벡터 설정 */
+	PUSH(DS);
+	AX = 0;
+	DS = AX;
+	asmout("MOV WORD [DS:0x0200], syscall");
+	[DS:0x0202] = CS;
+	POP(DS);
+
+	loaddir();
+
+command:
+	/* 커맨드 라인 루프 */
+	for (;;) {
+		AX = 0;
+		asmout("MOV BX,. cmdlin");
+		CX = 40 / 2;
+		do {
+			[DS:BX] = AX;
+			BX += 2;
+			CX--;
+		} while (! = 0);
+		asmout("MOV SI,. prompt");
+		putstr();
+		asmout("MOV SI,. cursor");
+		putstr();
+		for (;;) {
+			AH = 0x00;
+			INT(0x16);
+			BX = 0;
+			asmout("MOV BL,[putstr.curx]");
+			if ((unsigned) AL >= 0x20) {
+				if ((unsigned) AL < 0x7e) {
+					if ((unsigned) BL < 39) {
+						asmout("MOV SI,. char_cur");
+						[DS:SI + 1] = AL;
+						asmout("MOV [BX-2+.cmdlin], AL");
+						putstr();
+						continue;
+					}
+				}
+			}
+			if (AL == 0x08) { /* Backspace */
+				if ((unsigned) BL >= 3) {
+					asmout("MOV BYTE [BX-3+.cmdlin], 0");
+					asmout("MOV SI,. backspace");
+					putstr();
+					continue;
+				}
+			}
+			if (AL == 0x0d)
+				break; /* Enter */
+		}
+		asmout("MOV SI,. delcur_lf");
+		putstr();
+		asmout("MOV BX,. cmdlin");
+		AX = [DS:BX + 0];
+		CX = [DS:BX + 2];
+		DX = [DS:BX + 4];
+		if (AX == 0)
+			continue;
+		/* cls */
+		if (AX == 0x6c63) {
+			if (CX == 0x0073) {
+				cls();
+				continue;
+			}
+		}
+		/* reset */
+		if (AX == 0x6572) {
+			if (CX == 0x6573) {
+				if (DX == 0x0074) {
+					INT(0x19);
+					continue;
+				}
+			}
+		}
+		/* BASIC(어떻게 될지 모르는 hidden 커맨드......웃음) */
+		if (AX == 0x4142) {
+			if (CX == 0x4953) {
+				if (DX == 0x0043) {
+					INT(0x18);
+					continue;
+				}
+			}
+		}
+		/* dir */
+		if (AX == 0x6964) {
+			if (CX == 0x0072) {
+				PUSH(ES);
+				AX = CS;
+				AX += SEG_DIR;
+				ES = AX;
+				DI = 0;
+				for (;;) {
+					AX = [ES:DI];
+					if (AL == 0)
+						break;
+					if (AL ! = 0xe5) {
+						TEST((char) [ES:DI + 11], 0x18);
+						if (== 0) {
+							asmout("MOV SI,. cmdlin");
+							[DS:SI + 0] = AX;
+							AX = [ES:DI + 2];
+							[DS:SI + 2] = AX;
+							AX = [ES:DI + 4];
+							[DS:SI + 4] = AX;
+							AX = [ES:DI + 6];
+							[DS:SI + 6] = AX;
+							AL = 0x20;
+							AH = [ES:DI + 8];
+							[DS:SI + 8] = AX;
+							AL = [ES:DI + 9];
+							AH = [ES:DI + 10];
+							[DS:SI + 10] = AX;
+							(short) [DS:SI + 12] = 0x000a;
+							putstr();
+						}
+					}
+					DI += 32;
+				}
+				POP(ES);
+				continue;
+			}
+		}
+
+		/* 커멘드명으로 간주하여 ????????.hoa를 찾는다 */
+		CL = 8;
+		do {
+			AL = [DS:BX];
+			if (AL == 0x00)
+				AL = 0x20;
+			if ((unsigned) AL >= 0x61) {
+				if ((unsigned) AL <= 0x7a)
+					AL -= 0x20;
+			}
+			[DS:BX] = AL;
+			BX++;
+			CL--;
+		} while (! = 0);
+		BX -= 8;
+		PUSH(ES);
+		AX = CS;
+		AX += SEG_DIR;
+		ES = AX;
+		DI = 0;
+		for (;;) {
+			AX = [ES:DI];
+			if (AL == 0)
+				break;
+			TEST((char) [ES:DI + 11], 0x18);
+			if (== 0) {
+				if ((unsigned) (short) [ES:DI + 8] == 0x4f48) {
+					if ((unsigned) (char) [ES:DI + 10] == 0x41) {
+						if (AX == [DS:BX]) {
+							AX = [ES:DI + 2];
+							if (AX == [DS:BX + 2]) {
+								AX = [ES:DI + 4];
+								if (AX == [DS:BX + 4]) {
+									AX = [ES:DI + 6];
+									if (AX == [DS:BX + 6]) {
+										/* 파일 발견!  */
+										AX = [ES:DI + 26];
+										AX -= 2;
+										asmout("MUL WORD [loaddir.SIZ_CLU]");
+										asmout("ADD AX,[loaddir.LBA_CLU2]");
+										SI = AX;
+										CL = 1;
+										AX = CS;
+										AX += SEG_APP;
+										ES = AX;
+										BX = 0x0100;
+										readsec();
+										if (CF ! = 0) {
+											asmout("MOV SI,. diskerr");
+											putstr();
+											goto command;
+										}
+										AX = ES;
+										SS = AX;
+										SP = 0xfffe;
+										DS = AX;
+										PUSH(AX);
+										PUSH(0x0100);
+										RETF(); /* 어플리케이션에 분기 */
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			DI += 32;
+		}
+		POP(ES);
+
+		asmout("MOV SI,. badcmd");
+		putstr();
+	}
+
+msg:
+	asmout("DB 'heboOS dayoon! ', 10");
+lf:
+	DB(10, 0);
+prompt:
+	asmout("DB '>', 0");
+char_cur:
+	DB(8, 0);
+cursor:
+	asmout("DB '_', 0");
+backspace:
+	DB(8, 0x20, 8, 8);
+	asmout("DB '_', 0");
+delcur_lf:
+	DB(8, 0x20, 10, 0);
+badcmd:
+	asmout("DB 'Bad command o', 'r file name', 10,0");
+		/* naskcnv0가 방해되므로 'or'와 함께 쓰면 이상한 반응을 해 버린다 */
+diskerr:
+	asmout("DB 'Disk error', 10,0");
+	ALIGNB(2);
+cmdlin:
+	RESB(40);
+}
+
+void cls()
+{
+	PUSH(DS);
+	AX = 0xa000;
+	DS = AX;
+	BX = 0;
+	AX = 0;
+	do {
+		[DS:BX] = AX;
+		BX += 2;
+	} while (! = 0);
+	POP(DS);
+	asmout("MOV [CS:putstr.curx], AX"); /* 표시 좌표를 0에 */
+	return;
+}
+
+void putstr()
+/* DS:SI에 텍스트 */
+/* 이해할 수 있는 컨트롤 코드는 0x08, 0x0a만(=단순한 실수) */
+/* 0x00을 만나면 끝난다 */
+{
+	PUSH(ES);
+	PUSH(DI);
+	PUSH(SI);
+	PUSH(BX);
+	PUSH(CX);
+	PUSH(AX);
+	AX = 0xa000;
+	ES = AX;
+	for (;;) {
+		BX = 0;
+		BL = [DS:SI];
+		SI++;
+		if (BL == 0x0a)
+			goto newline;
+		if (BL == 0x08) {
+			asmout("DEC BYTE [CS:.curx]");
+			continue;
+		}
+		BX *= 16;
+		if (== 0)
+			break;
+		asmout("ADD BX, -0x20*16+charfont");
+		/* DI = curx * 8 + cury * 16 * 320; */
+		AX = 0;
+		asmout("MOV AL,[CS:.curx]");
+		AX *= 8;
+		CX = 0;
+		asmout("MOV CX,[CS:.cury]");
+		DI = CX;
+		DI *= 4;
+		DI += CX; /* 이것으로 DI = CX * 5; */
+		DI *= 1024;
+		DI += AX;
+		CH = 16;
+		do {
+			CL = 8;
+			AL = [CS:BX];
+			BX++;
+			do {
+				AL <<= 1;
+				SBB(AH, AH); /* if (CF == 0) AH = 0; else AH = 0xff; */
+				AH &= 0x0f;
+				[ES:DI] = AH;
+				DI++;
+				CL--;
+			} while (! = 0);
+			DI += 320 - 8;
+			CH--;
+		} while (! = 0);
+		asmout("MOV AL, BYTE [CS:.curx]");
+		AL++;
+		asmout("MOV BYTE [CS:.curx], AL");
+		if (AL == 40) {
+newline:
+			asmout("MOV BYTE [CS:.curx], 0");
+			asmout("MOV AL, BYTE [CS:.cury]");
+			AL++;
+			asmout("MOV BYTE [CS:.cury], AL");
+			if (AL == 12)
+				scroll();
+		}
+	}
+	POP(AX);
+	POP(BX);
+	POP(CX);
+	POP(SI);
+	POP(DI);
+	POP(ES);
+	return;
+
+	ALIGNB(2);
+curx:	DB(0);
+cury:	DB(0);
+}
+
+void scroll()
+{
+	PUSH(DS);
+	AX = 0xa000;
+	DS = AX;
+	SI = 320 * 16;
+	DI = 0;
+	do {
+		AX = [DS:SI];
+		SI += 2;
+		[DS:DI] = AX;
+		DI += 2;
+	} while ((unsigned) SI < 320 * 200);
+	AX = 0;
+	do {
+		[DS:DI] = AX;
+		DI += 2;
+	} while ((unsigned) DI < 320 * 200);
+	POP(DS);
+	asmout("DEC BYTE [CS:putstr.cury]");
+	return;
+}
+
+void readsec()
+{
+	CH = 3;
+	do {
+		PUSH(ES);
+		PUSH(SI);
+		PUSH(BX);
+		PUSH(DX);
+		PUSH(CX);
+		PUSH(AX);
+		AX = SI;
+		CL = 18;
+		DIV(CL);
+		CH = AL;
+		DH = AL;
+		CL = AH;
+		(unsigned char) CH /= 2;
+		DH &= 0x01;
+		CL++;
+		AX = 0x0201;
+		DL = 0;
+		INT(0x13);
+		POP(AX);
+		POP(CX);
+		POP(DX);
+		POP(BX);
+		POP(SI);
+		POP(ES);
+		if (CF ! = 0) {
+			CH--;
+			if (== 0)
+				break;
+			PUSH(ES);
+			PUSH(SI);
+			PUSH(BX);
+			PUSH(DX);
+			PUSH(CX);
+			PUSH(AX);
+			AH = 0x11;
+			DL = 0;
+			INT(0x13);
+			POP(AX);
+			POP(CX);
+			POP(DX);
+			POP(BX);
+			POP(SI);
+			POP(ES);
+			continue;
+		}
+		BX += 512;
+		SI++;
+		CLC();
+		CL--;
+	} while (! = 0);
+	return;
+}
+
+void loaddir()
+/* 디스크로부터 디렉토리를 읽어들인다 */
+{
+	PUSH(ES);
+	AX = CS;
+	AX += SEG_DIR;
+	ES = AX;
+	(char) [ES:0] = 0x00; /* 에러 시, 파일 없음으로 된다 */
+	AX = CS;
+	AX += SEG_APP;
+	ES = AX;
+	BX = 0;
+	SI = 0;
+	CL = 1;
+	readsec();
+	if (CF ! = 0)
+		goto err;
+	AL = [ES:0x000d];
+	asmout("MOV [. SIZ_CLU], AL");
+	AX = [ES:0x000e];
+	asmout("MOV [. LBA_FAT], AX");
+	CX = [ES:0x0016];
+	AX += CX;
+	asmout("MOV [. LBA_FAT2], AX");
+	AX += CX;
+	asmout("MOV [. LBA_DIR], AX");
+	CX = [ES:0x0011];
+	asmout("MOV [. SIZ_DIR], CX");
+	CX *= 32;
+	CX += 511;
+	(unsigned short) CX /= 512;
+	AX += CX;
+	asmout("MOV [. LBA_CLU2], AX");
+	AX = CS;
+	AX += SEG_DIR;
+	ES = AX;
+	BX = 0;
+	asmout("MOV SI,[. LBA_DIR]");
+	readsec();
+	asmout("MOV BX,[. SIZ_DIR]");
+	BX--;
+	BX *= 32;
+	(char) [ES:BX] = 0x00; /* 만약을 위한 터미네이터 */
+err:
+	POP(ES);
+	return;
+
+	ALIGNB(2);
+LBA_FAT:
+	DW(1);
+LBA_FAT2:
+	DW(10);
+LBA_DIR:
+	DW(19);
+LBA_CLU2:
+	DW(33);
+SIZ_DIR:
+	DW(0x00e0);
+SIZ_CLU:
+	DW(1);
+}
+
+void syscall()
+/* 어플리케이션으로부터 call */
+{
+	PUSH(DI);
+	PUSH(SI);
+	PUSH(BP);
+	PUSH(BX);
+	PUSH(DX);
+	PUSH(CX);
+	PUSH(AX);
+	BP = SP;
+	if (AX == 0) { /* 어플리케이션 종료, CX에 리턴값을 넣음 */
+		AX = CS;
+		SS = AX;
+		SP = 0xfffe;
+		DS = AX;
+		ES = AX;
+		asmout("JMP main.command");
+	}
+	if (AX == 1) { /* 문자 표시 함수 */
+		putstr();
+		goto fin;
+	}
+	if (AX == 2) { /* 화면 클리어 함수 */
+		cls();
+		goto fin;
+	}
+err:
+	(char) [SS:BP + 18] |= 0x01; /* STC */
+	goto fin2;
+fin:
+	(char) [SS:BP + 18] &= 0xfe; /* CLC */
+fin2:
+	POP(AX);
+	POP(CX);
+	POP(DX);
+	POP(BX);
+	POP(BP);
+	POP(SI);
+	POP(DI);
+	IRET();
+}
+
+void charfont() {}
+/* makeos.bat가 여기에 폰트 바이너리를 구축한다 */

@@ -13,6 +13,7 @@
 * [Kotlin in Action](https://www.manning.com/books/kotlin-in-action)
 * [Learning RxJava](https://www.packtpub.com/application-development/learning-rxjava)
 * [Mastering Rust](https://www.packtpub.com/application-development/mastering-rust)
+* [OS 구조와 원리: OS 개발 30일 프로젝트](http://www.hanbit.co.kr/store/books/look.php?p_code=B9833754652)
 * [Programming in Scala, 3rd Edition](https://booksites.artima.com/programming_in_scala_3ed)
 * [Programming Windows, 5th Edition](http://www.charlespetzold.com/pw5/)
 * [Programming Windows, 6th Edition](https://www.microsoftpressstore.com/store/programming-windows-9780735671713)

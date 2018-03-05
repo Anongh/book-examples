@@ -1,0 +1,119 @@
+폴더의 내용에 대해
+
+  이하에 대해 잘 모르는 것이 있으면 서포트 페이지로 질문해 주세요.
+
+1. tolsrc 폴더
+
+  tolset의 소스 프로그램입니다. 이런 것이 있어도 그다지 참고가 되지 않을지도
+모르지만, 없는 것 보다는 좋을 것이다라고 생각하여 넣어 두었습니다(독자 중의 한사람
+정도는, 읽어 보고 싶다고 생각할지도 모른다고 생각했으므로).
+
+    aksa1a      aksa.exe의 소스 프로그램입니다.
+      -- 이것은 역ASKA를 하는 소프트웨어입니다(실행 파일로부터 소스 프로그램을 만든다).
+         ASKA에 대해서는 아래 내용을 참조해 주세요.
+
+    aska        aska.exe의 소스 프로그램입니다.
+      -- nask와는 문법이 다른 어셈블러입니다. 예를 들어 EAX = ECX; 가 MOV입니다.
+         필자는 애용하고 있습니다만, 버그 등이 많고 사용하기 어렵기 때문에,
+         여러분에게 추천하지는 않겠습니다.
+
+    bim2bi4w    bim2bin.exe의 소스 프로그램입니다.
+
+    bim2hrb     bim2hrb.exe의 소스 프로그램입니다.
+
+    bin2obj     bin2obj.exe의 소스 프로그램입니다.
+
+    doscmd0a    doscmd.exe의 소스 프로그램입니다.
+      -- 이것은 주로 Cygwin로 tolset이 잘 움직이지 않는 사람들을 위한 툴입니다. 자세한
+         것은 tolopt/fix_cygw/readme.txt나 서포트 페이지에서.
+
+    edimg0i     edimg.exe의 소스 프로그램입니다.
+
+    go_0023s    cc1.exe, cpp0.exe, nask.exe, gas2nask.exe, golib00.exe,
+                naskcnv0.exe, sjisconv.exe, golibc.lib, w32clibc.lib 의
+                소스 프로그램입니다.
+                  cc1.exe      -- C컴파일러
+                  cpp0.exe     -- #include 나 #define 만을 처리하는 프로그램
+                  nask.exe     -- 어셈블러
+                  gas2nask.exe --  cc1의 출력을 nask 형식으로 변환
+                  golib00.exe  -- 라이브러리
+                  naskcnv0.exe -- aska의 출력을 nask 형식으로 변환
+                  sjisconv.exe -- 전각 문자를 포함한 소스 프로그램을
+                                  cc1로 안전하게 처리할 수 있는 형식으로 변환
+                  golibc.lib   -- sprintf 등, OS에 의존하지 않는 표준 함수의 라이브러리
+                                  컴파일러의 덤
+                  w32clibc.lib -- Windows용의 표준 함수의 라이브러리
+
+    hrblib0a    z_tools/haribote/harilibc.lib의 소스 프로그램입니다.
+      -- HariMain를 호출하기 위한 라이브러리입니다.
+
+    imgtol0d    imgtol.com의 소스 프로그램입니다.
+
+    makefont    makefont.exe의 소스 프로그램입니다.
+
+    obj2bi4c    obj2bim.exe의 소스 프로그램입니다.
+
+    osalink1    osalink1.exe의 소스 프로그램입니다.
+      -- 이것은 OSASK의 OS본체 전용 링커입니다. 이런 것이 있어도 아무런 도움이
+         되지 않습니다만, tolset에는 이것이 들어가 있다는 것이 OSASK계의 상식이므로,
+         넣어 두었습니다. 어쩔 수 없이 이와 같이 소스도 넣었습니다. 그것 뿐입니다.
+
+   sartol0j     sartol.exe의 소스 프로그램입니다.
+     -- tek압축을 사용하여 라이브러리(.zip같은 것)을 만들거나 해동하거나 하는
+        소프트웨어입니다. 표준 확장자(extension)는 .sar입니다.
+
+   tk5lgpl1    t5lzma.exe의 소스 프로그램입니다.
+
+2. osask 폴더
+
+  필자가 만들고 있는 OSASK의 ver.4.7을 넣어 두었습니다. 덤입니다. 이런 것이 있어도
+별 참고는 되지 않겠지만, 뭐 시간때우기 정도는 할 수 있을지도 모릅니다.
+
+    osat47i    가장 기본적인 OSASK의 패키지입니다. README0.TXT의 4.장을
+               읽으면, 간단하게 인스톨 할 수 있다고 생각합니다. 다른 장에는 HDD나
+               메모리 카드로의 인스톨 방법이 써 있습니다만, 여러 가지
+               주의 사항이 있어서 그것을 지키지 않으면 위험하기 때문에 추천하지 않습니다.
+
+    osat47uf   USB의 floppy-disk drive를 사용하고 있는 사람은 osat47i
+               대신에 이것을 사용하십시오.
+
+    osat47cd   CD-ROM 기동용의 .ISO 파일판의 OSASK입니다.
+
+    make47     OSASK ver.4.7의 원시 파일입니다.
+
+3. heboos 폴더
+
+  필자가 http://community.osdev.info/? FirstStep로 개발·공개하고 있던, 매우
+저기능의 OS입니다. 어셈블러로만 쓰여져 있는데다가 16bit 모드용입니다. 본서가
+나올 때까지는 이것을 사용하여 「OS자작 입문」을 만들고 있었습니다.
+
+  minifsos는, 「작은(mini) 최초의 단계(first-step)의 OS」라고 하는 의미로,
+OS는 겨우 80바이트입니다. 약간의 그림이 나올 뿐입니다. 자세하게는 상기 페이지를 봐
+주세요.
+
+  heboos는, 「OS」라고 하는 의미로, OS본체는 1.08KB에 증가하고 있습니다. 이것은
+「하리보테 OS」의3%에도 못미친 크기입니다만 dir커맨드 등을 실행할 수 있습니다.
+자세하게는 상기 페이지를 봐 주세요.
+
+  모두 본서로 OS만들기를 배운 다음에는, 거의 참고가 되지 않을 것입니다.
+asmhead.nas만으로 OS를 만든 예라고 생각하면 알기 쉬울까 생각합니다. 어셈블러
+만으로 이렇게 OS를 만들어 갈 수도 있구나...하는 것으로, 덤으로 넣어 두기로
+했습니다.
+
+4. tolopt 폴더
+
+  tolset를 확장·개조하기 위한의 것입니다. tolset의 옵션 KIT입니다. 필요한
+사람은 사용해 주세요(기본적으로는 불필요합니다). 모두 사용법은 각 폴더의
+readme.txt를 봐 주세요.
+
+    fix_cygw   Cygwin를 사용하고 있는 탓으로 make가 잘 되지 않는 사람을 위한 것입니다.
+
+    bochs226   아무래도 QEMU가 잘 동작하지 않는, 혹은 QEMU는 질렸으므로 다른
+               에뮬레이터에서 시험해 보고 싶은 사람을 위해서 bochs-2.2.6을
+               준비해 보았습니다.
+
+5. 그 외
+
+  필자가 만든 OSASK를 QEMU로 간편하게 즐기고 싶은 경우는, tolset/z_osabin/의 run.bat를
+더블 클릭 해 주세요. 사용법등에 대해서는 상기의 osat47i안의 readme
+등을 참조해 주세요.

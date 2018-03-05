@@ -1,0 +1,66 @@
+[for LZMAEncoder.cpp]
+
+	_K_isRepExt[i]. Init();	/* !!! */
+
+	_K_RepExt.Init(); /* !!! */
+
+			if (pos == 3 && _K_erd ! = 0)
+            	_K_isRepExt[_state.Index]. Encode(&_rangeEncoder, 0); /* !!! */
+
+			/* 이하 KL-01을 주장 */
+			symbol -= kNumMidSymbols;
+			_choice2.Encode(rangeEncoder, 1);
+			if (symbol < (1 << kNumHighBits) - 8)
+				_highCoder.Encode(rangeEncoder, symbol);
+			else {
+				int l0, l1;
+				symbol -= (1 << kNumHighBits) - 8 - 1; /* 1이상 */
+				/* 이 symbol를 표현하는데 어떤 비트가 필요할까?  */
+				for (l0 = 1; symbol >= (1 << l0); l0++);
+				/* 대답：l0비트(l0=1-255) */
+				/* 이 l0를 표현하는데 어떤 비트가 필요할까? */
+				for (l1 = 0; l0 >= (2 << l1); l1++);
+				/* 대답：(l1 + 1) 비트(l1=0-7) */
+				_highCoder.Encode(rangeEncoder, (1 << kNumHighBits) - 8 + l1);
+				if (l1 > 0)
+					rangeEncoder->EncodeDirectBits(l0, l1);
+				l0--;
+				if (l0 > 0)
+					rangeEncoder->EncodeDirectBits(symbol, l0);
+			}
+
+[for LZMADecoder.h]
+
+		i = _highCoder.Decode(rangeDecoder) - (256 - 8);
+		if (i > 0) {
+			i = (1 << i | rangeDecoder->DecodeDirectBits(i)) - 1;
+			i = (1 << i | rangeDecoder->DecodeDirectBits(i)) - 1;
+		}
+		return (kNumLowSymbols + kNumMidSymbols + (256 - 8)) + i;
+
+[for dtk5lgpl.c]
+
+/* !!! */
+#define RC_GET_BIT(prob, mi) \
+  UInt32 bound = (range >> kNumBitModelTotalBits) * *prob; \
+  if (code < bound) \
+    { range = bound; *prob += (kBitModelTotal - *prob) >> kNumMoveBits; mi += mi + 1; } \
+  else \
+    { range -= bound; code -= bound; *prob -= (*prob) >> kNumMoveBits; mi += mi; } \
+  RC_NORMALIZE
+
+int LzmaLenDecode(CProb *p, CRangeDecoder *rd, int posState)
+{
+	int i;
+	if (RangeDecoderBitDecode(p + LenChoice, rd) == 0)
+		return RangeDecoderBitTreeDecode(p + LenLow + (posState << kLenNumLowBits), kLenNumLowBits, rd);
+	if (RangeDecoderBitDecode(p + LenChoice2, rd) == 0)
+		return kLenNumLowSymbols + RangeDecoderBitTreeDecode(p + LenMid + (posState << kLenNumMidBits), kLenNumMidBits, rd);
+	i = RangeDecoderBitTreeDecode(p + LenHigh, kLenNumHighBits, rd) - (kLenNumHighSymbols - 8);
+	if (i > 0) {
+		i = (1 << i | RangeDecoderDecodeDirectBits(rd, i)) - 1;
+		/* 여기서 i == 254 때는 한층 더 확장 */
+		i = (1 << i | RangeDecoderDecodeDirectBits(rd, i)) - 1;
+	}
+	return i + (kLenNumLowSymbols + kLenNumMidSymbols + kLenNumHighSymbols - 8);
+}

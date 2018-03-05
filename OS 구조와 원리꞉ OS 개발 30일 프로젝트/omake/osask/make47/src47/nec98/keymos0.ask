@@ -1,0 +1,1670 @@
+// "keymos0.ask" for NEC98 ver. 0.4 copyright(C) 2002 H.Kawai(카와이 히데미)
+
+/* 현재 대부분이 TOWNS 베이스 */
+
+#include "osaskinc.ask"
+
+segment CODE(USE32, PARA);
+default(code == CODE);
+
+struct keyboarddata {
+	int send_buf[64]; // 0x00
+	int pushflags[64]; // 0x40
+	int queue_buf[128]; // 0x80 (dw수:32...블록은 최고에서도 8dw정도로)
+	int mouse_queue_buf[128]; // 0x100
+	int keysignal[6], [2]; // 0x180
+	/* void near * */ int keyjmp; // 0x188
+	int mousejmp;
+	unsigned int queue_free_dw, queue_write_ptr; // 0x190, 0x194
+	unsigned int queue_exec_ptr, exec_wait_int;  // 0x198, 0x19c
+	unsigned int mouse_queue_free_dw, mouse_queue_write_ptr; // 0x1a0, 0x1a4
+	unsigned int mouse_queue_exec_ptr, mouse_exec_wait_int;  // 0x1a8, 0x1ac
+	int mousesignal[6], [2]; // 0x1b0
+	int keyerr_signal[6], [2]; // 0x1b8
+	int mouse_send_buf[64]; // 0x1c0
+	int err_send_buf[64]; // 0x200
+	char firstbyte;
+	char mousebutton;
+	int mouseinterval;
+//	int mouse_x, mouse_y;
+//	unsigned char led;
+};
+
+struct SS0_struct {
+	void [32];
+	char ring0_count, [3];
+	/* void * */ int [4], ring0call[6], [2];
+	char cli_count, [3];
+	/* void * */ int [4], cli_call[6], [2];
+};
+
+void near keyboardInit();
+void near KeyboardQueueExecute();
+void near MouseQueueExecute();
+void near KeyIntDrv_Normal();
+
+void far keyboard_syscmd()
+{
+	int *cmd == FS:EBX;
+	keyboarddata *work == DS:0;
+
+	PUSHAD();
+	MOV(EAX, CS);
+	PUSH(DS);
+	EAX += 8;
+	DS = AX;
+nextcmd:
+	EAX = *cmd;
+	if (EAX == 0)
+		goto cmd0000;
+//	if (EAX == 0x0108)
+//		goto cmd0108; // KeySetLed
+	if (EAX == 0x0120)
+		goto cmd0120; // MouseEnable
+	if (EAX == 0x0104)
+		goto cmd0104; // KeyboardReset
+//	if (EAX == 0x011c)
+//		goto cmd011c; // MouseReset
+	if (EAX == 0x0114)
+		goto cmd0114; // SetFinishSignal
+	if (EAX == 0x0110)
+		goto cmd0110; // connect Decoder
+//	if (EAX == 0x0118)
+//		goto cmd0118; // KeyEnableA20
+	if (EAX == 0x0100)
+		goto cmd0100; // 초기화
+//	if (EAX == 0x010c)
+//		goto cmd010c; // KeyResetCPU
+	if (EAX == 0x0124)
+		goto cmd0124; // KeyboardIntDrv의 벡터 제공
+//	if (EAX == 0x0128)
+//		goto cmd0128; // MouseIntDrv의 벡터 제공
+	if (EAX == 0x0018)
+		goto cmd0018; // 버전 요구
+
+	INT(0x03);
+
+cmd0000:
+	POP(DS);
+	[SS:ESP + 16] = EBX;
+	POPAD();
+	return;
+
+cmd0100:
+	// 초기화
+	PUSH((offset) cmd);
+	keyboardInit();
+	POP((offset) cmd);
+	(offset) cmd += 4;
+	goto nextcmd;
+
+cmd0104:
+	// KeyboardReset
+#if 0
+#if 0
+	AL = 0;
+	OUT(0x0043, AL); /* dummy cmd */
+	NOP();
+	OUT(0x005f, AL); /* wait port */
+	NOP();
+	OUT(0x0043, AL); /* dummy cmd */
+	NOP();
+	OUT(0x005f, AL); /* wait port */
+	NOP();
+	OUT(0x0043, AL); /* dummy cmd */
+	NOP();
+	OUT(0x005f, AL); /* wait port */
+	AL = 0x40;
+	OUT(0x0043, AL); /* reset cmd */
+	NOP();
+	OUT(0x005f, AL); /* wait port */
+	AL = 0x5e;
+	OUT(0x0043, AL); /* mode cmd */
+	NOP();
+	OUT(0x005f, AL); /* wait port */
+#endif
+	AL = 0x3a;
+	OUT(0x0043, AL); /* cmd(break on) */
+	/* 200~600msec.  wait */
+	/* 본래대로라면 타이머를 사용해야 하겠지만, 부실 */
+	ECX = 45000;
+	do {
+		OUT(0x005f, AL);
+		NOP();
+		OUT(0x005f, AL);
+		NOP();
+		OUT(0x005f, AL);
+		NOP();
+		OUT(0x005f, AL);
+		ECX--;
+		OUT(0x005f, AL);
+	} while (! = 0);
+	AL = 0x32;
+	OUT(0x0043, AL); /* cmd(break off) */
+	NOP();
+	OUT(0x005f, AL); /* wait port */
+	AL = 0x16;
+	OUT(0x0043, AL); /* cmd(error clear) */
+#endif
+	(offset) cmd += 4;
+	goto nextcmd;
+
+#if 0
+cmd0108:
+	// KeySetLed
+	EAX = cmd[4];
+	PUSH(FS);
+	PUSH((offset) cmd);
+	CX = SS;
+	ESP -= 28;
+	FS = CX;
+	unsigned int *led_cmds == SS:ESP;
+	led_cmds[0] = 5;
+	asmout("MOV DWORD PTR SS:[ESP+4], OFFSET KeyQueCmd_WaitBufEnpty");
+	/* led_cmds[ 4] = (offset) KeyQueCmd_AckSendData */ asmout("MOV DWORD PTR SS:[ESP+8], OFFSET KeyQueCmd_AckSendData");
+	/* (char) led_cmds[ 8] = 0xed */ asmout("MOV BYTE PTR SS:[ESP+12], 0EDH");
+	/* led_cmds[12] = (offset) KeyQueCmd_AckSendData */ asmout("MOV DWORD PTR SS:[ESP+16], OFFSET KeyQueCmd_AckSendData");
+	/* (char) led_cmds[16] */ [led_cmds + 20] = AL;
+	led_cmds[24] = 0;
+	EBX = ESP;
+	KeyboardQueueExecute();
+	ESP += 28;
+	POP((offset) cmd);
+	POP(FS);
+	(offset) cmd += 8;
+	goto nextcmd;
+
+cmd010c:
+	// KeyResetCPU
+	PUSH(FS);
+	PUSH((offset) cmd);
+	AX = CS;
+	FS = AX;
+	/* EBX = (offset) cmd010c_cmdline */ asmout("MOV EBX, OFFSET #cmd010c_cmdline");
+	KeyboardQueueExecute();
+	POP((offset) cmd);
+	POP(FS);
+	(offset) cmd += 4;
+	goto nextcmd;
+
+// 본래라면 CF도 체크하지 않으면 안 되고,
+// 정상 종료 인터럽트도 발행해야 함
+
+	ALIGN(4);
+
+cmd010c_cmdline:
+
+// 본래는 최초로 타임 아웃을 걸어 버퍼로 처리할 수 있어야 함
+
+	DD(3);
+	asmout("DD OFFSET KeyQueCmd_WaitBufEnpty");
+	asmout("DD OFFSET KeyQueCmd_WriteCmdReg, 0FEH"); // reset CPU
+	DD(0);
+
+// Bit 7  Keyboard data (output)    1
+// Bit 6  Keyboard clock (output)   1
+// Bit 5  Input buffer empty        0
+// Bit 4  Output buffer full        1
+// Bit 3  Reserved                  1
+// Bit 2  Reserved                  1
+// Bit 1  Gate A20                  1
+// Bit 0  System Reset              0
+#endif
+
+cmd0110:
+	// connect Decoder
+	EAX = cmd[4];
+	ECX = cmd[8];
+	(int) [DS:0x0180] = EAX;
+	(int) [DS:0x0184] = ECX;
+	(offset) cmd += 12;
+	goto nextcmd;
+
+cmd0114:
+	// SetFinishSignal
+	MOV(EAX, SS);
+	PUSH(FS);
+	PUSH((offset) cmd);
+	PUSH((int) 0);
+	asmout("PUSH OFFSET KeyQueCmd_MakeFinishSignal");
+	PUSH(cmd[16]);
+	PUSH(cmd[12]);
+	PUSH(cmd[ 8]);
+	PUSH(cmd[ 4]);
+	asmout("PUSH OFFSET KeyQueCmd_SetErrSignal");
+	PUSH((int) 6);
+	FS = AX;
+	EBX = ESP;
+	KeyboardQueueExecute();
+	if (CF == 0) {
+		ESP += 4 * 8;
+		POP((offset) cmd);
+		POP(FS);
+		(offset) cmd += 20;
+		goto nextcmd;
+	}
+	INT(0x03);
+
+cmd0120:
+	// MouseEnable
+	// timer로부터 node를 받아 그것을 등록
+
+	work->mousebutton = 0xe0;
+	EDX = 0x7fdd;
+	AL = 0x90; /* HC = 1 */
+	OUT(DX, AL);
+
+	PUSH(FS);
+	PUSH((offset) cmd);
+	PUSH(SS);
+	POP(FS);
+	PUSH(0);
+	ESP -= 32;
+	PUSH(4 /* 일반 정보 요구 */);
+	PUSH(4);
+	PUSH(EAX); /* dummy */
+	PUSH(2 * 4 /* GetNode */);
+	EBX = ESP;
+	CALL(10 * 8, 0); /* timer */
+	POP(EAX);
+	POP(EDX); /* timer-node */
+
+	ESP += 36;
+	POP(ECX); /* 인터럽트 주파수[Hz] */
+	ECX /= 32; /* 31밀리 second */
+	work->mouseinterval = ECX;
+
+	PUSH(EDX);
+	PUSH(4 * 4 /* 타이머 등록 */);
+	PUSH(EDX);
+	PUSH(7 * 4 /* 현재 시각 세트 */);
+	PUSH(CS);
+	asmout("PUSH OFFSET #cmd0120_mousetimer");
+	PUSH(EDX);
+	PUSH(10 * 4 /* 벡터 세트 */);
+	EBX = ESP;
+	CALL(10 * 8, 0); /* timer */
+	ESP += 9 * 4;
+	POP((offset) cmd);
+	POP(FS);
+	(offset) cmd += 4;
+	goto nextcmd;
+
+cmd0120_mousetimer:
+	PUSH(DS);
+	MOV(EAX, CS);
+	EAX += 8;
+	DS = AX;
+
+	ECX = 0;
+	EBX = 0;
+	EDX = 0x7fdd;
+	AL = 0x10; /* HC = 0(1→0) */
+	OUT(DX, AL);
+	AL = 0x90; /* HC = 1, XL */
+	OUT(DX, AL);
+	DL = 0xd9;
+	IN(AL, DX);
+	BL = AL;
+	AL &= 0x0f;
+	CL = AL;
+	DL = 0xdd;
+	AL = 0xb0; /* HC = 1, XH */
+	OUT(DX, AL);
+	DL = 0xd9;
+	BL &= 0xf0;
+	IN(AL, DX);
+	AL *= 16;
+	CL |= AL;
+	DL = 0xdd;
+	AL = 0xd0; /* HC = 1, YL */
+	OUT(DX, AL);
+	DL = 0xd9;
+	IN(AL, DX);
+	AL &= 0x0f;
+	CH = AL;
+	DL = 0xdd;
+	AL = 0xf0; /* HC = 1, YH */
+	OUT(DX, AL);
+	DL = 0xd9;
+	IN(AL, DX);
+	AL *= 16;
+	CH |= AL;
+	if (BL == work->mousebutton) {
+		if (ECX == 0)
+			goto cmd0120_skip;
+	}
+
+	ECX *= 256;
+	work->mousebutton = BL;
+	EBX >>= 5;
+	asmout("MOV CL,[CS:#cmd0120_table+EBX]");
+	PUSH(FS);
+	PUSH(SS);
+	POP(FS);
+	PUSH(0);
+	PUSH(ECX);
+	PUSH(0x73756f6d);
+	PUSH(0x7f000002);
+	PUSH(0x3240 + 3);
+	PUSH(0x0114 /* 커맨드 시그널 직접(without wait) */);
+	EBX = ESP;
+	CALL(12 * 8, 0); /* tapi */
+	ESP += 24;
+	POP(FS);
+
+cmd0120_skip:
+	EAX = work->mouseinterval;
+	ECX = 0;
+	EDX = 0;
+	STC();
+	POP(DS);
+	RETF();
+
+cmd0120_table:
+	DB(7 /* MRL */, 5 /* M_L */, 3 /* _RL */, 1 /* __L */);
+	DB(6 /* MR_ */, 4 /* M__ */, 2 /* _R_ */, 0 /* ___ */);
+
+#if 0
+cmd0118:
+	// KeyEnableA20
+	AX = CS;
+	PUSH(FS);
+	PUSH((offset) cmd);
+	FS = AX;
+	/* EBX = (offset) cmd0118_cmdline */ asmout("MOV EBX, OFFSET #cmd0118_cmdline");
+	KeyboardQueueExecute();
+	POP((offset) cmd);
+	POP(FS);
+	(offset) cmd += 4;
+	goto nextcmd;
+
+// 본래대로라면 CF도 체크하지 않으면 안 되고,
+// 정상 종료 인터럽트도 발행해야 함
+
+	ALIGN(4);
+
+cmd0118_cmdline:
+
+// 본래는 최초로 타임 아웃을 걸어, 버퍼로 처리할 수 있어야 함
+
+	DD(6);
+	asmout("DD OFFSET KeyQueCmd_WaitBufEnpty");
+	asmout("DD OFFSET KeyQueCmd_WriteCmdReg, 0D1H");
+	asmout("DD OFFSET KeyQueCmd_WaitBufEnpty");
+	asmout("DD OFFSET KeyQueCmd_SendData, 0DFH"); // enable A20 (0 xdd라면 disable)
+	DD(0);
+
+// Bit 7  Keyboard data (output)    1
+// Bit 6  Keyboard clock (output)   1
+// Bit 5  Input buffer empty        0
+// Bit 4  Output buffer full        1
+// Bit 3  Reserved                  1
+// Bit 2  Reserved                  1
+// Bit 1  Gate A20                  1
+// Bit 0  System Reset              1
+
+cmd011c:
+	// MouseReset
+	AX = CS;
+	PUSH(FS);
+	PUSH((offset) cmd);
+	FS = AX;
+	/* EBX = (offset) cmd011c_cmdline */ asmout("MOV EBX, OFFSET #cmd011c_cmdline");
+	MouseQueueExecute();
+	POP((offset) cmd);
+	POP(FS);
+	(offset) cmd += 4;
+	goto nextcmd;
+
+// 본래대로라면 CF도 체크하지 않으면 안 되고,
+// 정상 종료 인터럽트도 발행해야 함
+
+	ALIGN(4);
+
+cmd011c_cmdline:
+
+// 본래는 최초로 타임 아웃을 걸어 버퍼로 처리할 수 있어야 함
+
+	DD(9);
+	asmout("DD OFFSET KeyQueCmd_WaitBufEnpty");
+	asmout("DD OFFSET KeyQueCmd_WriteCmdReg, 060H");  // write mode command
+	asmout("DD OFFSET KeyQueCmd_WaitBufEnpty");
+	asmout("DD OFFSET KeyQueCmd_SendData, 047H"); // 01000111b
+		// IRQ01 enable, IRQ12 enable, system flag on, keylock enable
+		// keyboard interface enable, mouse interface enable, scan code 1(PC format)
+	asmout("DD OFFSET KeyQueCmd_WaitBufEnpty");
+	asmout("DD OFFSET KeyQueCmd_WriteCmdReg, 0A8H");  // mouse interface enable
+
+	DD(2 /* 7 */);
+	asmout("DD OFFSET KeyQueCmd_WaitBufEnpty");
+//	asmout("DD OFFSET MouQueCmd_AckSendData, 0FFH"); // mouse reset
+		// ↑이 커맨드가 타임아웃 하면, 마우스는 연결되지 않았다
+//	asmout("DD OFFSET MouQueCmd_RecieveCheck, 0AAH"); // power on reset(reset 성공 제 1바이트)
+//	asmout("DD OFFSET MouQueCmd_RecieveCheck, 000H"); // power on reset(reset 성공 제 2바이트)
+	asmout("DD OFFSET MouQueCmd_ResetCommand");
+
+	DD(0);
+
+cmd0120:
+	// MouseEnable
+	AX = CS;
+	PUSH(FS);
+	PUSH((offset) cmd);
+	FS = AX;
+	/* EBX = (offset) cmd0120_cmdline */ asmout("MOV EBX, OFFSET #cmd0120_cmdline");
+	MouseQueueExecute();
+	POP((offset) cmd);
+	POP(FS);
+	(offset) cmd += 4;
+	goto nextcmd;
+
+// 본래대로라면 CF도 체크하지 않으면 안 되고,
+// 정상 종료 인터럽트도 발행해야 함
+
+	ALIGN(4);
+
+cmd0120_cmdline:
+
+// 본래는 최초로 타임 아웃을 걸어 버퍼로 처리할 수 있어야 함
+
+	DD(3);
+	asmout("DD OFFSET KeyQueCmd_WaitBufEnpty");
+//	asmout("DD OFFSET KeyQueCmd_WriteCmdReg, 0D4H"); // to mouse prefix
+//	asmout("DD OFFSET KeyQueCmd_WaitBufEnpty");
+	asmout("DD OFFSET MouQueCmd_AckSendData, 0F4H"); // mouse enable
+
+	DD(0);
+#endif
+
+cmd0124:
+	// KeyboardIntDrv의 벡터 제공
+	asmout("MOV DWORD PTR FS:[EBX+4], OFFSET KeyboardIntDrv");
+	(short) cmd[8] = CS;
+	(offset) cmd += 12;
+	goto nextcmd;
+
+#if 0
+
+cmd0128:
+	// MouseIntDrv의 벡터 제공
+	asmout("MOV DWORD PTR FS:[EBX+4], OFFSET MouseIntDrv");
+	(short) cmd[8] = CS;
+	(offset) cmd += 12;
+	goto nextcmd;
+
+#endif
+
+cmd0018:
+	// 버전 요구
+	// 본래는, cmd[4]가 0인 것을 확인하지 않으면 안 된다
+	cmd[ 8] = 300; // ver. 0.30
+	cmd[12] = 0;
+	cmd[16] = 0;
+	cmd[20] = 0;
+	(offset) cmd += 24;
+	goto nextcmd;
+}
+
+void near keyboardInit()
+// 본래대로라면 이것들은 1개의 태스크로써 기동한다.
+// LDT에 시스템 콜에 필요한 모든 환경을 설치하고,
+// 세팅이 끝나면 sleeve 한다.
+// 범용 레지스터는 모두 파괴된다
+{
+	unsigned int Init_sel     ==  2 * 8, TAPI_sel   == 12 * 8;
+
+	// ASKA의 보충을 위한 정수 선언
+	asmout("work_send_buf EQU 0000H");
+	asmout("work_pushflags EQU 0040H");
+	asmout("work_queue_buf EQU 0080H");
+	asmout("work_queue_buf_size EQU 0080H");
+	asmout("work_mouse_queue_buf EQU 0100H");
+	asmout("work_mouse_queue_buf_size EQU 0080H");
+	asmout("work_mousejmp EQU 018CH");
+	asmout("work_mouse_exec_wait_int EQU 01ACH");
+	asmout("work_mousesignal EQU 01B0H");
+	asmout("work_keyerr_signal EQU 01B8H");
+	asmout("work_mouse_send_buf equ 01C0H");
+	asmout("work_err_send_buf EQU 0200H");
+
+//	PUSH(DS); // 미리 malloc을 해서 GDT에 할당해 둔다
+//	PUSH(EAX);
+//	PUSH(ECX);
+//	AX = CS; AX += 8; DS = AX; // 특정의 DS에 의존하지 않기 위한 수속
+
+	keyboarddata *work == DS:0;
+	int zero == EAX, i == ECX;
+	zero = 0;
+	i = 64 + 64 / 8; // 하는 김에 pushflags도 초기화
+	do {
+		i--;
+		/* work->send_buf[i * 8 + 0] = zero */ asmout("MOV DWORD PTR DS:[ECX * 8 + 0], EAX");
+		/* work->send_buf[i * 8 + 4] = zero */ asmout("MOV DWORD PTR DS:[ECX * 8 + 4], EAX");
+	} while (! = 0);
+
+	/* work->keyjmp = KeyIntDrv_Normal; */ asmout("MOV DWORD PTR DS:[0188h], OFFSET KeyIntDrv_Normal");
+
+//	/* work->keysignal[0] = keytest; */ asmout("MOV DWORD PTR DS:[0180h], OFFSET keytest");
+//	/* work->keysignal[4] */ [work + 0x184] = CS;
+//	asmout("MOV DWORD PTR DS:[0000H], 000007F1H");
+//	asmout("MOV DWORD PTR DS:[0004H], 5");
+//	asmout("MOV DWORD PTR DS:[0180H], OFFSET Keydecode_Main");
+//	asmout("MOV DWORD PTR DS:[0184H],22*8");
+
+	work->queue_free_dw = /* sizeof (work->queue_buf) */ 128 / 4 - 1 /* quecmd_tonormal의 분 */;
+	work->queue_write_ptr = /* (offset) work->queue_buf */ 0x80;
+	work->queue_exec_ptr  = /* (offset) work->queue_buf */ 0x80;
+
+//	/* work->mousejmp = MouseIntDrv_Phase0; */ asmout("MOV DWORD PTR DS:[018CH], OFFSET MouseIntDrv_Phase0");
+
+	PUSH(FS);
+//	PUSH(EBX);
+	PUSH((int) 0); // eoc
+	PUSH(EAX);
+	PUSH(EAX);
+	PUSH(0x011c /* TAPI_SingnalMessageTimer 벡터 요구 */);
+	MOV(EAX, SS);
+	EBX = ESP;
+	FS = AX;
+	CALL(TAPI_sel, 0);
+	POP(EAX);
+	POP(work->mousesignal[0]);
+	POP(work->mousesignal[4]);
+	POP(EAX);
+//	POP(EBX);
+	POP(FS);
+
+	/* work->mouse_send_buf[0] = 0x00003244 */ asmout("MOV DWORD PTR DS:[work_mouse_send_buf+0], 3244H");
+	/* work->mouse_send_buf[4] = 0x7f000003 */ asmout("MOV DWORD PTR DS:[work_mouse_send_buf+4], 7F000003H");
+	/* work->mouse_send_buf[8] = 0x73756f6d */ asmout("MOV DWORD PTR DS:[work_mouse_send_buf+8], 73756F6DH");
+	/* work->mouse_send_buf[12] = 0 */ asmout("MOV DWORD PTR DS:[work_mouse_send_buf+12], 0");
+//	/* work->mousesignal[0] = (offset) mousetest; */ asmout("MOV DWORD PTR DS:[work_mousesignal+0], OFFSET TAPI_SingnalMessageTimer");
+//	/* work->mousesignal[4] */ [work + 0x1B4] = /* CS */ 12*8;
+//	asmout("MOV DWORD PTR DS:[work_mousesignal+4],12*8");
+
+	work->mouse_queue_free_dw = /* sizeof (work->mouse_queue_buf) */ 128 / 4 - 1 /* mouse_quecmd_tonormal의 분 */;
+	work->mouse_queue_write_ptr = /* (offset) work->mouse_queue_buf */ 0x100;
+	work->mouse_queue_exec_ptr  = /* (offset) work->mouse_queue_buf */ 0x100;
+
+	/* work->keyerr_signal[0] = (offset) dummy_fret */ asmout("MOV DWORD PTR DS:[work_keyerr_signal+0], OFFSET dummy_fret");
+	/* work->keyerr_signal[4] = CS */ asmout("MOV WORD PTR DS:[work_keyerr_signal+4], CS");
+
+//	POP(ECX);
+//	POP(EAX);
+//	POP(DS);
+dummy_fret:
+	asmout("dummy_fret:");
+	return;
+}
+
+/*
+	DS:ESI로부터의 사양(타이머 전용 시그널 처리 루틴 사용시).
+	+00 : bit0-2 : 메세지 dw수. 최고 7(28bytes).
+	      bit3   : eax, ecx, edx 로드 & CF = 1을 할지의 여부(1으로 한다).
+	      bit4-  : 메세지의 송신지의 지정에 사용한다(시그널 포토).
+	+04 -	     : 메세지를 쓴다
+
+	DS:ESI로부터의 사양(범용 시그널 처리 루틴 사용시).
+	+00 : bit0-3 : 메세지 dw수. 최고 15(60bytes).
+	      bit4-  : 메세지의 송신지의 지정에 사용한다(시그널 포토).
+	+04 -	     : 메세지를 쓴다
+
+	일반적으로는, 메세지 본체의 최초의 4바이트는 받은 루틴이 누구로부터의 메세지일까를
+	식별하는데 사용된다. 그러므로, 키코드치 등은 +08에 write된다.
+*/
+
+void far KeyboardIntDrv()
+{
+#if 0
+	struct SS0_struct {
+		void [32];
+		int ring0_count;
+		/* void * */ int [4], ring0call[6], [2];
+		int cli_count;
+		/* void * */ int [4], cli_call[6], [2];
+	};
+#endif
+
+	SS0_struct *ss0 == /* SS:(- sizeof (SS0_struct)) */ SS:0xffffffc0;
+
+	PUSH(DS);
+	PUSH(EAX);
+	PUSH(EDX);
+	MOV(EAX, CS); EAX += 8; DS = AX; // 특정의 DS에 의존하지 않기 위한 수속
+	ss0->ring0_count++; // 인터럽트 루틴의 기본
+	ss0->cli_count++;
+}
+
+void near KeyboardIntDrv2()
+{
+	keyboarddata *work == DS:0;
+
+	IN(AL, 0x0043);
+	NOP();
+	IN(AL, 0x0041);
+	AH = AL;
+	AL = 0x61 /* IRQ-01을 종료 */;
+	OUT(0x00, AL); /* OCW2 */
+//	asmout("JMP DWORD PTR DS:[0188H]"); // goto work->keyjmp;
+}
+
+void near KeyIntDrv_Normal()
+{
+	keyboarddata *work == DS:0;
+	unsigned int keycode == EAX;
+
+#if 0
+	TEST(AH, AH);
+	if ((signed) < 0) {
+		// 제1 바이트
+		work->firstbyte = AH;
+		goto fin;
+	}
+	// 제2 바이트
+	/* (false) */ if (AH == 0x7e) {
+		/* work->keyjmp = KeyIntDrv_E0byte; */ asmout("MOV DWORD PTR DS:[0188H], OFFSET KeyIntDrv_7Ebyte");
+		goto fin;
+	}
+#endif
+#if 0
+if (AL == 0x01 /* ESC */) { // !!!
+	// +00 : EAX
+	// +04 : DS
+	// +08 : EIP
+	// +12 : CS
+	// +16 : ELFAGS
+	EAX = (int) [SS:ESP +  8];
+	ECX = (int) [SS:ESP + 12];
+	INT(0x03);
+}
+#endif
+
+	AL = AH;
+
+send_keycode_AL:
+	asmout("KeyIntDrv_send_keycode_AL: EQU $");
+//	AH = work->firstbyte;
+//	(unsigned char) AH >>= 4;
+//	if (AH ! = 0x0f) {
+		// make/break
+		keycode <<= 24;
+		(signed int) keycode >>= 24;
+		keycode &= 0x0100007f; // 00:make, 01:break
+//	} else {
+//		keycode &= 0x020000ff;
+//		keycode |= 0x02000000;
+//	}
+send_keycode:
+	/* make/break의 경우는 remake나 overbreak의 체크도 한다 */
+	asmout("KeyIntDrv_send_keycode: EQU $");
+	PUSHAD();
+#if 0
+	if (keycode < 0x02000000) {
+		keycode2 = keycode;
+		keycode3 = 0;
+		keycode2 &= 0x1ff;
+		/* (true) */ if (keycode < 0x01000000) {
+			// make
+			/* BTS(*(work->pushflags), keycode2) */ asmout("BTS DWORD PTR DS:[040H], ECX");
+		} else {
+			// break
+			/* BTR(*(work->pushflags), keycode2) */ asmout("BTR DWORD PTR DS:[040H], ECX");
+			CMC() /* CF =~ CF */;
+		}
+		ADC(keycode3, 0);
+		keycode3 <<= 25; // EAX = 0 or 0x02000000
+		keycode |= keycode3;
+	}
+#endif
+
+	/* work->send_buf[8] */ [work + 0x08] = keycode;
+	// make/remake/break/overbreak는 머지않아 송신한다
+	ESI = /* &work->send_buf */ 0x00;
+	/* (work->keysignal)() */ asmout("CALL FAR DWORD DS:[0180H]"); 
+	// ESI도 포함하여 범용 레지스터는 모두 파괴된다
+	POPAD();
+fin:
+}
+
+void near KeyIntDrv_Ret()
+{
+//	IN(AL, 0x64);
+//	AL &= 0x21;
+	// if (AL == 1 /* keyboard data 있어 */) goto KeyboardIntDrv2;
+//	CMP(AL, 1);
+//	asmout("JE KeyboardIntDrv2");
+		// 대부분의 경우 KeyIntDrv_Normal로 돌아올 것이다.
+		// 그러나, 키 시그널이 계기가 되어 커맨드 모드로 옮길지도 모른다.
+//	AL = 0x61 /* IRQ-01을 종료 */;
+//	OUT(0x20, AL);
+	POP(EDX);
+	POP(EAX);
+
+	SS0_struct *ss0 == /* SS:(- sizeof (SS0_struct)) */ SS:0xffffffc0;
+
+	ss0->cli_count--; // 인터럽트 루틴의 기본
+	if (== 0) goto call_clicall;
+	POP(DS);
+	ss0->ring0_count--;
+	if (== 0) goto call_ring0call;
+	IRETD();
+
+call_clicall:
+	PUSHAD();
+	/* (ss0->clicall)() */ asmout("CALL FAR DWORD SS:[0FFFFFFC0H+038H]");
+	POPAD();
+	POP(DS);
+	ss0->ring0_count--;
+	if (== 0) goto call_ring0call;
+	IRETD();
+
+call_ring0call:
+	/* (ss0->ring0call)() */ jmp_system_count0();
+//	IRETD();
+}
+
+void near KeyIntDrv_7Ebyte()
+{
+	asmout("#fin EQU KeyIntDrv_Ret");
+	asmout("#sendkeycode_AL EQU KeyIntDrv_send_keycode_AL");
+	unsigned int keycode == EAX;
+	TEST(AH, AH);
+	if ((signed) < 0)
+		goto fin; // 제1 바이트
+	// 제2 바이트
+	AL = AH;
+	/* work->keyjmp = KeyIntDrv_Normal; */ asmout("MOV DWORD PTR DS:[0188h], OFFSET KeyIntDrv_Normal");
+	AL |= 0x80;
+
+#if 0
+if (AL == 0x5d /* SYSREQ */) { // !!!
+	// +00 : EAX
+	// +04 : DS
+	// +08 : EIP
+	// +12 : CS
+	// +16 : ELFAGS
+	EAX = (int) [SS:ESP +  8];
+	ECX = (int) [SS:ESP + 12];
+	INT(0x03);
+}
+#endif
+
+	goto sendkeycode_AL;
+}
+
+
+void near KeyboardQueueExecute()
+/*	키보드 마이크로 command queuing
+
+	좀 더 다기능으로 한다. 지정 바이트 대기, ACK/NACK 전송, 단순 전송, 을 선택할 수 있다.
+		4바이트의 점프 벡터를 커맨드로 한다.
+		파라미터(parameter)도 4바이트 align.
+		또, 커맨드에 의한 커맨드 큐도 선두로 이동한다.
+
+		정상 모드로 이행	00    <
+		단순 전송		01xx
+		지정 바이트 수신 대기	02xx < 수신하고 싶은 바이트수를 쓴다
+		특정 데이터 수신 대기	03xx < ...에러때는, 0x00000001를 돌려준다.
+		ACK 전송			04xx < ...에러때는, 0x00000002를 돌려준다.
+		수신 데이터 버림	05    < 바이트수 불명의 경우
+		수신 포인터 초기화	06
+		정상 종료 시그널 발생	07	... 정상 종료이므로 0을 돌려준다.
+		
+		시그널 헤더 설정	80 (align 4) dw, wd, wd
+		시그널 확장 설정	81 (align 4) dw, wd, wd
+				(최초의 6bytes는 포인터. 마지막 wd는 전송 dw수)
+		시그널 벡터 설정	82 (align 4) dw, wd, wd
+				(최초의 6bytes는 포인터. 마지막 wd는 더미)
+		수신 데이터 카피	83 (align 4) dw, wd, wd
+				(최초의 6bytes는 포인터. 마지막 wd는 전송 가능 dw수)
+				 덧붙여 전송 되는 최초의 dw는 버퍼 사용량.
+
+	write 값은 그만둔다. write할 곳은 수신 버퍼.
+
+	이 표안의 00~83은 FS:EBX에 write하는 커맨드와는 무관계
+
+	이 기능(02) 덕분에 복수 바이트의 대기를 기술할 수 있다
+	일반적으로는 에러 시그널은 상위의 키보드 드라이버에 접속한다.
+	일반의 어플리케이션으로 설정해서는 안된다.
+
+	어떻게 돌아올까. jmp로 하고 싶지만 그렇게해도 안된다.
+	nret라고 하는 것도 조금 부족하다. ···nret로 하자.
+	큐의 도중에는 KeyWorkJmp는 변화하지 않는다. ···그러니까, running 플래그로 사용할 수 있다.
+
+	fs:ebx에 전송 하고 싶은 데이터를 쌓아 두고 call할 뿐. 그리고는 책임을 지고 큐에 보내 준다.
+		(형식은, dw수, 데이터,···)
+	타임아웃용의 타이머가 있으면 좋다. 노드는 1개로 충분.
+
+	범용 레지스터는 모두 파괴된다
+*/
+{
+	keyboarddata *work == DS:0;
+	SS0_struct *ss0 == /* SS:(- sizeof (SS0_struct)) */ SS:0xffffffc0;
+	asmout("#KeyIntDrv_Ret EQU KeyIntDrv_Ret");
+
+	PUSHFD();
+	CLI();
+	unsigned int *wp == DS:ESI, free == EDX, *commands == FS:EBX;
+	(offset) wp = work->queue_write_ptr;
+	free = work->queue_free_dw;
+	unsigned int cmds_length == ECX;
+	cmds_length = *commands;
+	(offset) commands += 4;
+	do {
+		free -= cmds_length;
+		/* (false) */ if ((unsigned) < 0) { // 종료 커맨드는 동일해도 괜찮다
+			// 모두를 백지화로 한다
+buf_full_err:
+			(offset) wp = work->queue_write_ptr;
+			/* *wp = quecmd_tonormal */ asmout("MOV DWORD PTR DS:[ESI], OFFSET #quecmd_tonormal");
+				// queue_write_ptr를 초기화한다
+			POPFD();
+			STC();
+			return;
+		}
+		/* EAX = (offset) wp + cmds_length * 4 */ asmout("LEA EAX,[ESI+ECX*4]");
+		/* (false) */ if ((unsigned) EAX >= /* (offset) work->queue_buf + sizeof (work->queue_buf) */ 0x100) {
+			// 동일해서는 안되는 이유는 헤드에 되돌리는 커맨드를 사용할 수 없으니까
+			// free -= (work->queue_buf + sizeof (work->queue_buf) - (offset) wp) / 4;
+			// free += (- work->queue_buf - sizeof (work->queue_buf) + (offset) wp) / 4;
+			/* EAX = (offset) wp - ((offset) work->queue_buf + sizeof (work->queue)); */
+			asmout("LEA EAX,[ESI-0100H]");
+			/* *wp = (offset) quecmd_restore */ asmout("MOV DWORD PTR DS:[ESI], OFFSET #quecmd_restore");
+			EAX /= 4;
+			free += EAX; // 만약, 이것으로 free가 0 혹은 마이너그가 되면 역시 부족하게 된다
+			if ((signed) < 0)
+				goto buf_full_err;
+			(offset) wp = /* work->queue_buf */ 0x080;
+		}
+		do {
+			EAX = *commands;
+			(offset) commands += 4;
+			*wp = EAX;
+			(offset) wp += 4;
+			cmds_length--;
+		} while (! = 0);
+		cmds_length = *commands;
+		(offset) commands += 4;
+	} while (cmds_length > 0);
+	/* EAX = (offset) KeyQueIntDrv */ asmout("MOV EAX, OFFSET #KeyQueIntDrv");
+	/* *wp = quecmd_tonormal */ asmout("MOV DWORD PTR DS:[ESI], OFFSET #quecmd_tonormal");
+	work->queue_write_ptr = (offset) wp;
+	work->queue_free_dw = free;
+	/* (false) */ if (EAX == work->keyjmp) {
+		POPFD();
+		CLC();
+		return;
+	}
+	work->keyjmp = EAX;
+	ss0->cli_count++;
+	EBX = /* work->queue_exec_ptr */ /* (offset) work->queue_buf */ 0x80;
+	EBP = free;
+	/* [(void near *) DS:EBX](); */ asmout("CALL DWORD PTR DS:[080H]");
+	work->queue_exec_ptr = EBX;
+	work->queue_free_dw = EBP;
+	ss0->cli_count--;
+	if (! = 0) {
+		POPFD();
+		CLC();
+		return;
+	}
+	PUSH(DS);
+	/* (ss0->cli_call)() */ asmout("CALL FAR DWORD SS:[0FFFFFFC0H+038H]");
+	POP(DS);
+	POPFD();
+	CLC();
+	return;
+
+//	ALIGN(16);
+KeyQueIntDrv:
+	PUSHAD();
+	EBX = work->queue_exec_ptr;
+	EBP = work->queue_free_dw;
+	/* ((void near *) work->exec_wait_int)(); */ asmout("CALL DWORD PTR DS:[019CH]");
+	work->queue_exec_ptr = EBX;
+	work->queue_free_dw = EBP;
+	POPAD();
+	goto KeyIntDrv_Ret;
+
+/*
+	입력 데이터 대기라면 exec_wait_int를 세트 하는 것
+	타이머 등을 기다리는 경우는 예외로 한다.
+	타임아웃용 타이머를 사용한다면 사용 후는 캔슬된 상태로 해 둘 것.
+	···라고 하는 것은, 캔슬 마이크로 코드를 사용한다고 하는 것.
+	(타이머 사용 커맨드는 현재부터의 시간을 write하면 된다)
+
+*/
+
+quecmd_tonormal:
+	/* work->keyjmp = KeyIntDrv_Normal; */ asmout("MOV DWORD PTR DS:[0188h], OFFSET KeyIntDrv_Normal");
+	work->queue_write_ptr = /* (offset) work->queue_buf */ 0x80;
+	EBP = /* sizeof (work->queue_buf) */ 128 / 4 - 1 /* qurcmd_tonormal의 분 */;
+	EBX = /* (offset) work->queue_buf */ 0x80;
+	/* (near) */ return;
+
+quecmd_restore:
+	// EBP += (work->queue_buf + sizeof (work->queue) - EBX) / 4
+	//     -= (EBX - (work->queue_buf + sizeof (work->queue)) / 4
+	asmout("LEA EAX,[EBX-0100H]");
+	/* EBX = work->queue_buf */ asmout("MOV EBX, work_queue_buf");
+	/* (signed int) */ EAX /= 4;
+	EBP -= EAX;
+	/* goto [(void near *) work->queue_buf] */ asmout("JMP DWORD PTR DS:[0080H]");
+}
+
+void near KeyQueCmd_SendData()
+// 단순 송신
+{
+	AL = [DS:EBX+4];
+	EBX += 8;
+	EBP += 2;
+	OUT(0x60, AL);
+	/* goto [(void near *) DS:EBX] */ asmout("JMP DWORD PTR DS:[EBX]");
+}
+
+void near KeyQueCmd_AckSendData()
+// ACK 제어 첨부 송신
+{
+	/* work->exec_wait_int = intack; */ asmout("MOV DWORD PTR DS:[019CH], OFFSET #intack");
+retry:
+	AL = [DS:EBX + 4];
+	OUT(0x60, AL);
+	return; // EBX와 EBP는 그대로 둔다(실행중의 명령이 모르게 되기 때문에)
+
+intack:
+	if (AL == 0xfa /* ACK */) {
+		EBX += 8;
+		EBP += 2;
+		/* goto [(void near *) DS:EBX] */ asmout("JMP DWORD PTR DS:[EBX]");
+	}
+	if (AL == 0xfe /* NACK */)
+		goto retry;
+
+	// 이하는 SOLO2150 대책
+	EBX += 8;
+	EBP += 2;
+	asmout("CMP DWORD PTR DS:[EBX], OFFSET KeyQueCmd_RecieveCheck");
+	if (==) {
+		if (AL == [DS:EBX+4]) {
+			EBX += 8;
+			EBP += 2;
+			/* goto [(void near *) DS:EBX] */ asmout("JMP DWORD PTR DS:[EBX]");
+		}
+	}
+
+	EBX -= 8;
+	EBP -= 2;
+	INT(0x03); // 에러 시그널을 발생시킨다
+}
+
+/*
+
+KeyQueCmd_RecieveBytes	proc	near	; n바이트 수신
+
+			mov	dword ptr ds:[KeyWorkQueIP], offset #intres
+			mov	dword ptr ds:[KeyWorkQuePtr], ebx
+			mov	dword ptr ds:[KeyWorkQueFreDw], ebp
+			ret
+#intres:
+			mov	esi, dword ptr ds:[KeyWorkBufPtr]
+			mov	 byte ptr ds:[esi], al
+			inc	esi
+			mov	dword ptr ds:[KeyWorkBufPtr], esi
+			dec	dword ptr ds:[ebx][4]
+			jz	short #fin
+			ret
+#fin:
+			add	ebx, 8
+			add	ebp, 2
+			jmp	dword ptr ds:[ebx]
+
+KeyQueCmd_RecieveBytes	endp
+
+*/
+
+void near KeyQueCmd_RecieveCheck()
+// 1바이트 수신＆체크
+{
+	/* work->exec_wait_int = intres; */ asmout("MOV DWORD PTR DS:[019CH], OFFSET #intres");
+	return; // EBX와 EBP는 그대로 해 둔다(실행 중의 명령이 모르게 되기 때문에)
+
+intres:
+	if (AL == [DS:EBX+4]) {
+		EBX += 8;
+		EBP += 2;
+		/* goto [(void near *) DS:EBX] */ asmout("JMP DWORD PTR DS:[EBX]");
+	}
+	INT(0x03); // 본래대로라면 여기서 에러 시그널
+}
+
+void near KeyQueCmd_WriteCmdReg()
+// 키보드 인터페이스에 송신
+{
+	AL = [DS:EBX + 4];
+	EBX += 8;
+	EBP += 2;
+	OUT(0x64, AL);
+	/* goto [(void near *) DS:EBX] */ asmout("JMP DWORD PTR DS:[EBX]");
+}
+
+/*
+
+KeyQueCmd_SetBufPtr	proc	near
+
+			mov	eax, dword ptr ds:[ebx][4]
+			add	ebx, 8
+			add	ebp, 2
+			mov	dword ptr ds:[KeyWorkBufPtr], eax
+			jmp	dword ptr ds:[ebx]
+
+KeyQueCmd_SetBufPtr	endp
+
+KeyQueCmd_SetTimer	proc	near
+
+#exec			equ	TimerConstNodeExec
+#time			equ	TimerConstNodeTime
+
+			push	 es
+			push	 fs
+			pushad
+			mov	 ax, ds
+			mov	 fs, ax
+			mov	eax, TimerWorkSel
+			mov	 es, ax
+			mov	ebx, KeyWorkTimerCmd2	; 시각 취득
+			fcall	TimerSel, TimerSysCmd	; 시스템 콜
+
+;	본래는, 여기서 에러 체크 할 것
+
+			mov	ebx, dword ptr ss:[esp][16]	; ebx 복귀
+			mov	edi, dword ptr ds:[KeyWorkTimerCmd1][04]	; node
+			mov	eax, dword ptr ds:[KeyWorkTimerCmd2][04]
+			mov	edx, dword ptr ds:[KeyWorkTimerCmd2][08]
+			add	eax, dword ptr ds:[ebx][04]
+			mov	ecx, dword ptr ds:[KeyWorkTimerCmd2][12]
+			adc	edx, dword ptr ds:[ebx][08]
+			mov	dword ptr es:[edi][#time][0], eax
+			adc	ecx, dword ptr ds:[ebx][12]
+			mov	eax, dword ptr ds:[ebx][16]
+			add	ebx, 20
+			mov	dword ptr es:[edi][#time][4], edx
+			mov	dword ptr es:[edi][#time][8], ecx
+			mov	dword ptr es:[edi][#exec][0], eax
+			mov	 word ptr es:[edi][#exec][4], cs
+			mov	dword ptr ss:[esp][16], ebx
+			mov	ebx, KeyWorkTimerCmd1
+			mov	dword ptr ds:[KeyWorkTimerCmd1],04*4	; set timer
+			fcall	TimerSel, TimerSysCmd	; 시스템 콜
+
+;	본래는, 여기서 에러 체크 할 것
+
+			popad
+			pop	 fs
+			pop	 es
+			add	ebp, 5
+			jmp	dword ptr ds:[ebx]
+
+KeyQueCmd_SetTimer	endp
+
+KeyQueCmd_CancelTimer	proc	near
+
+			push	 fs
+			pushad
+			mov	 ax, cs
+			add	 ax, 8
+			mov	 fs, ax
+			mov	ebx, KeyWorkTimerCmd1	; 인터럽트 취소
+			mov	dword ptr ds:[KeyWorkTimerCmd1],05*4	; cancel timer
+			fcall	TimerSel, TimerSysCmd	; 시스템 콜
+
+;	본래는, 여기서 에러 체크 할 것
+
+			popad
+			add	ebx, 4
+			inc	ebp
+			pop	 fs
+			jmp	dword ptr ds:[ebx]
+
+KeyQueCmd_CancelTimer	endp
+
+*/
+
+void near KeyQueCmd_WaitBufEnpty()
+// 출력 버퍼가 비는 것을 기다린다
+{
+	EBX += 4;
+	EBP++;
+	do {
+		IN(AL, 0x64);
+		TEST(AL, 0x02);
+	} while (! = 0);
+	/* goto [(void near *) DS:EBX] */ asmout("JMP DWORD PTR DS:[EBX]");
+}
+
+void near KeyQueCmd_CancelErrSignal()
+{
+	EBX += 4;
+	EBP++;
+	/* work->keyerr_signal[0] = (offset) dummy_fret */ asmout("MOV DWORD PTR DS:[work_keyerr_signal+0], OFFSET dummy_fret");
+	/* work->keyerr_signal[4] = CS */ asmout("MOV WORD PTR DS:[work_keyerr_signal+4], CS");
+	/* goto [(void near *) DS:EBX] */ asmout("JMP DWORD PTR DS:[EBX]");
+}
+
+void near KeyQueCmd_SetErrSignal()
+{
+	EAX = [DS:EBX +  4];
+	ECX = [DS:EBX +  8];
+	/* work->keyerr_signal[0] = EAX */ asmout("MOV DWORD PTR DS:[work_keyerr_signal+0], EAX");
+	/* work->keyerr_signal[4] = ECX */ asmout("MOV DWORD PTR DS:[work_keyerr_signal+4], ECX");
+	EAX = [DS:EBX + 12];
+	ECX = [DS:EBX + 16];
+	EBX += 20;
+	EBP += 5;
+	/* work->err_send_buf[0] = EAX */ asmout("MOV DWORD PTR DS:[work_err_send_buf+0], EAX");
+	/* work->err_send_buf[4] = ECX */ asmout("MOV DWORD PTR DS:[work_err_send_buf+4], ECX");
+	/* goto [(void near *) DS:EBX] */ asmout("JMP DWORD PTR DS:[EBX]");
+}
+
+void near KeyQueCmd_MakeFinishSignal()
+{
+	PUSH(EBX);
+	PUSH(EBP);
+	/* work->err_send_buf[8] = 0 */ asmout("MOV DWORD PTR DS:[work_err_send_buf+8], 0");
+	/* ESI = work->err_send_buf */ asmout("MOV ESI, work_err_send_buf");
+	asmout("CALL FAR DWORD DS:[work_keyerr_signal]");
+	POP(EBP);
+	POP(EBX);
+	EBX += 4;
+	EBP++;
+	/* goto [(void near *) DS:EBX] */ asmout("JMP DWORD PTR DS:[EBX]");
+}
+
+#if 0
+
+void far MouseIntDrv()
+// 키보드와 잘 닮은 구성
+{
+	SS0_struct *ss0 == /* SS:(- sizeof (SS0_struct)) */ SS:0xffffffc0;
+
+	PUSH(DS);
+	PUSH(EAX);
+	MOV(EAX, CS); EAX += 8; DS = AX; // 특정 DS에 의존하지 않기 위한 수속
+	ss0->ring0_count++; // 인터럽트 루틴의 기본
+	ss0->cli_count++;
+}
+
+void near MouseIntDrv2()
+{
+	// 먼저 인터럽트를 종료시켜 버린다(2001/02/18 데이터 에러가 있었기 때문에).
+	// 신호의 첫 시작이 인터럽트를 일으키기 때문에, 해는 없을 것이다.
+	AL = 0x64 /* IRQ-12를 종료 */;
+	OUT(0xa0, AL);
+	// 여기서 ISR를 읽어 IRQ-02를 종료해야할 것인가 판단하지 않으면 안 될지도 모른다
+	// 현 버전에서는 slave의 인터럽트는 1개 밖에 받아들이지 않는다
+	AL = 0x62 /* IRQ-02를 종료 */;
+	OUT(0x20, AL);
+
+	keyboarddata *work == DS:0;
+	IN(AL, 0x60);
+	asmout("JMP DWORD PTR DS:[work_mousejmp]"); // goto work->mousejmp;
+}
+
+// 1바이트씩 수신해 3바이트가 모이면 시그널을 출력
+
+void near MouseIntDrv_Phase0()
+{
+	keyboarddata *work == DS:0;
+	AH = AL;
+	/* work->mouse_send_buf[12] */ [work + 0x1cc] = AL;
+	AL &= 0xc8;
+	/* (false) */ if (AL ! = 0x08) { // 제1바이트로 적격하지 않다
+		if (AH == 0xaa) { // hot-plug?
+			// 타임 아웃 체크를 위해 타이머를 건다
+			/* work->mousejmp = (offset) MouseIntDrv_Phase3 */ asmout("MOV DWORD PTR DS:[work_mousejmp], OFFSET MouseIntDrv_Phase3");
+			/* goto MouseIntDrv_Ret */ asmout("JMP MouseIntDrv_Ret");
+		}
+		// INT(0x03); // 불명 바이트 수신 시그널을 발생
+		/* goto MouseIntDrv_Ret */ asmout("JMP MouseIntDrv_Ret"); // 무시.
+	}
+	/* work->mousejmp = (offset) MouseIntDrv_Phase1 */ asmout("MOV DWORD PTR DS:[work_mousejmp], OFFSET MouseIntDrv_Phase1");
+}
+
+void near MouseIntDrv_Ret()
+{
+//	IN(AL, 0x64);
+//	AL &= 0x21;
+	// if (AL == 0x21 /* mouse data 있음 */) goto MouseIntDrv2;
+//	CMP(AL, 0x21);
+//	asmout("JE MouseIntDrv2");
+//	AL = 0x64 /* IRQ-12를 종료 */;
+//	OUT(0xa0, AL);
+	// 여기서 ISR를 읽어 IRQ-01을 종료해야할 것인가 판단하지 않으면 안 될지도 모른다
+	// 현 버전에서는 slave의 인터럽트는 1개 밖에 받아들이지 않는다
+//	AL = 0x62 /* IRQ-01을 종료 */;
+//	OUT(0x20, AL);
+	POP(EAX);
+
+	SS0_struct *ss0 == /* SS:(- sizeof (SS0_struct)) */ SS:0xffffffc0;
+
+	ss0->cli_count--; // 인터럽트 루틴의 기본
+	if (== 0) goto call_clicall; // 키와 합류할 수 있다
+	POP(DS);
+	ss0->ring0_count--;
+	if (== 0) goto call_ring0call; // 키와 합류할 수 있다
+	IRETD();
+
+call_clicall:
+	PUSHAD();
+	/* (ss0->clicall)() */ asmout("CALL FAR DWORD SS:[0FFFFFFC0H+038H]");
+	POPAD();
+	POP(DS);
+	ss0->ring0_count--;
+	if (== 0) goto call_ring0call;
+	IRETD();
+
+call_ring0call:
+	/* (ss0->ring0call)() */ jmp_system_count0();
+//	IRETD();
+}
+
+void near MouseIntDrv_Phase1()
+{
+	keyboarddata *work == DS:0;
+	/* work->mouse_send_buf[16] */ [work + 0x1d0] = AL;
+	/* work->mousejmp = (offset) MouseIntDrv_Phase2 */ asmout("MOV DWORD PTR DS:[work_mousejmp], OFFSET MouseIntDrv_Phase2");
+	/* goto MouseIntDrv_Ret */ asmout("JMP MouseIntDrv_Ret");
+}
+
+void near MouseIntDrv_Phase2()
+{
+	keyboarddata *work == DS:0;
+	/* work->mouse_send_buf[18] */ [work + 0x1d2] = AL;
+	/* work->mousejmp = (offset) MouseIntDrv_Phase0 */ asmout("MOV DWORD PTR DS:[work_mousejmp], OFFSET MouseIntDrv_Phase0");
+
+	AL = (char) work->mouse_send_buf[12];
+	(char) work->mouse_send_buf[15] = 0x00; // 정상 모드
+	AH = AL;
+	AL <<= 3; // 제4bit : x의 제8bit
+	AH <<= 2; // 제5bit : y의 제8bit
+	(signed char) AL >>= 7;
+	(signed char) AH >>= 7;
+	(char) work->mouse_send_buf[17] = AL;
+	AL = (char) work->mouse_send_buf[18];
+	AX =- AX;
+	(short) work->mouse_send_buf[18] = AX;
+send_mousecode:
+	asmout("send_mousecode:");
+	PUSHAD();
+	ESI = /* work->mouse_send_buf */ 0x1c0;
+	/* (work->mousesignal)() */ asmout("CALL FAR DWORD DS:[work_mousesignal]"); 
+	// ESI도 포함해 범용 레지스터는 모두 파괴된다
+	POPAD();
+	/* goto MouseIntDrv_Ret */ asmout("JMP MouseIntDrv_Ret");
+}
+
+void near MouseIntDrv_Phase3()
+// 0 xaa를 수신한 후의 국면
+{
+	keyboarddata *work == DS:0;
+	(char) work->mouse_send_buf[15] = 0xa0; // 확장 모드 길이 2
+	(char) work->mouse_send_buf[13] = AL;
+	/* work->mousejmp = (offset) MouseIntDrv_Phase0 */ asmout("MOV DWORD PTR DS:[work_mousejmp], OFFSET MouseIntDrv_Phase0");
+	/* goto send_mousecode */ asmout("JMP send_mousecode");
+}
+
+void near MouseQueueExecute()
+{
+	keyboarddata *work == DS:0;
+	SS0_struct *ss0 == /* SS:(- sizeof (SS0_struct)) */ SS:0xffffffc0;
+	asmout("#MouseIntDrv_Ret EQU MouseIntDrv_Ret");
+
+	PUSHFD();
+	CLI();
+	unsigned int *wp == DS:ESI, free == EDX, *commands == FS:EBX;
+	(offset) wp = work->mouse_queue_write_ptr;
+	free = work->mouse_queue_free_dw;
+	unsigned int cmds_length == ECX;
+	cmds_length = *commands;
+	(offset) commands += 4;
+	do {
+		free -= cmds_length;
+		/* (false) */ if ((unsigned) < 0) { // 종료 커맨드는 동일해도 괜찮다
+			// 모두를 백지화로 한다
+buf_full_err:
+			(offset) wp = work->mouse_queue_write_ptr;
+			/* *wp = mouse_quecmd_tonormal */ asmout("MOV DWORD PTR DS:[ESI], OFFSET #mouse_quecmd_tonormal");
+				// 이 커맨드를 수리하면, mouse_queue_write_ptr를 초기화한다
+			POPFD();
+			STC();
+			return;
+		}
+		/* EAX = (offset) wp + cmds_length * 4 */ asmout("LEA EAX,[ESI+ECX*4]");
+		/* (false) */ if ((unsigned) EAX >= /* (offset) work->mouse_queue_buf + sizeof (work->mouse_queue_buf) */ 0x180) {
+			// 동일해도 안된 이유는, 헤드에 되돌리는 커맨드를 사용할 수 없으니까
+			// free -= (work->mouse_queue_buf + sizeof (work->mouse_queue_buf) - (offset) wp) / 4;
+			// free += (- work->mouse_queue_buf - sizeof (work->mouse_queue_buf) + (offset) wp) / 4;
+			/* EAX = (offset) wp - ((offset) work->mouse_queue_buf + sizeof (work->mouse_queue_buf)); */
+			asmout("LEA EAX,[ESI-0180H]");
+			/* *wp = (offset) mouse_quecmd_restore */ asmout("MOV DWORD PTR DS:[ESI], OFFSET #mouse_quecmd_restore");
+			EAX /= 4;
+			free += EAX; // 만약, 이것으로 free가  0혹은 마이너그가 되면 역시 부족하게 된다
+			if ((signed) < 0)
+				goto buf_full_err;
+			(offset) wp = /* work->mouse_queue_buf */ 0x100;
+		}
+		do {
+			EAX = *commands;
+			(offset) commands += 4;
+			*wp = EAX;
+			(offset) wp += 4;
+			cmds_length--;
+		} while (! = 0);
+		cmds_length = *commands;
+		(offset) commands += 4;
+	} while (cmds_length > 0);
+	/* EAX = (offset) MouseQueIntDrv */ asmout("MOV EAX, OFFSET #MouseQueIntDrv");
+	/* *wp = mouse_quecmd_tonormal */ asmout("MOV DWORD PTR DS:[ESI], OFFSET #mouse_quecmd_tonormal");
+	work->mouse_queue_write_ptr = (offset) wp;
+	work->mouse_queue_free_dw = free;
+	/* (false) */ if (EAX == work->mousejmp) {
+		POPFD();
+		CLC();
+		return;
+	}
+	work->mousejmp = EAX;
+	ss0->cli_count++;
+	EBX = /* work->mouse_queue_exec_ptr */ /* (offset) work->mouse_queue_buf */ 0x100;
+	EBP = free;
+	/* [(void near *) DS:EBX](); */ asmout("CALL DWORD PTR DS:[100H]");
+	work->mouse_queue_exec_ptr = EBX;
+	work->mouse_queue_free_dw = EBP;
+	ss0->cli_count--;
+	if (! = 0) {
+		POPFD();
+		CLC();
+		return;
+	}
+	PUSH(DS);
+	/* (ss0->cli_call)() */ asmout("CALL FAR DWORD SS:[0FFFFFFC0H+038H]");
+	POP(DS);
+	POPFD();
+	CLC();
+	return;
+
+//	ALIGN(16);
+MouseQueIntDrv:
+	PUSHAD();
+	EBX = work->mouse_queue_exec_ptr;
+	EBP = work->mouse_queue_free_dw;
+	/* ((void near *) work->mouse_exec_wait_int)(); */ asmout("CALL DWORD PTR DS:[work_mouse_exec_wait_int]");
+	work->mouse_queue_exec_ptr = EBX;
+	work->mouse_queue_free_dw = EBP;
+	POPAD();
+	goto MouseIntDrv_Ret;
+
+
+mouse_quecmd_tonormal:
+	/* work->mousejmp = MouseIntDrv_Phase0; */ asmout("MOV DWORD PTR DS:[018CH], OFFSET MouseIntDrv_Phase0");
+	work->mouse_queue_write_ptr = /* (offset) work->mouse_queue_buf */ 0x100;
+	EBP = /* sizeof (work->mouse_queue_buf) */ 128 / 4 - 1 /* mouse_quecmd_tonormal의 분 */;
+	EBX = /* (offset) work->mouse_queue_buf */ 0x100;
+	/* (near) */ return;
+
+mouse_quecmd_restore:
+	// EBP += (work->mouse_queue_buf + sizeof (work->mouse_queue) - EBX) / 4
+	//     -= (EBX - (work->mouse_queue_buf + sizeof (work->mouse_queue)) / 4
+	asmout("LEA EAX,[EBX-0180H]");
+	/* EBX = work->mouse_queue_buf */ asmout("MOV EBX, work_mouse_queue_buf");
+	/* (signed int) */ EAX /= 4;
+	EBP -= EAX;
+	/* goto [(void near *) work->mouse_queue_buf] */ asmout("JMP DWORD PTR DS:[0100H]");
+}
+
+void near MouQueCmd_RecieveCheck()
+// 1바이트 수신＆체크
+{
+	/* work->mouse_exec_wait_int = intres; */ asmout("MOV DWORD PTR DS:[work_mouse_exec_wait_int], OFFSET #intres");
+	return; // EBX와 EBP는 그대로 해 둔다(실행중의 명령이 모르게 되기 때문에)
+
+intres:
+	if (AL == [DS:EBX+4]) {
+		EBX += 8;
+		EBP += 2;
+		/* goto [(void near *) DS:EBX] */ asmout("JMP DWORD PTR DS:[EBX]");
+	}
+	INT(0x03); // 본래대로라면 여기서 에러 시그널
+}
+
+void near MouQueCmd_AckSendData()
+// ACK 제어 첨부 송신
+{
+	/* work->mouse_exec_wait_int = intack; */ asmout("MOV DWORD PTR DS:[work_mouse_exec_wait_int], OFFSET #intack");
+retry:
+	AL = 0xd4; // to mouse prefix
+	OUT(0x64, AL);
+	do {
+		IN(AL, 0x64);
+		TEST(AL, 0x02);
+	} while (! = 0);
+	AL = [DS:EBX + 4];
+	OUT(0x60, AL);
+	return; // EBX와 EBP는 그대로 해 둔다(실행중의 명령이 모르게 되기 때문에)
+
+intack:
+	if (AL == 0xfa /* ACK */) {
+		EBX += 8;
+		EBP += 2;
+		/* goto [(void near *) DS:EBX] */ asmout("JMP DWORD PTR DS:[EBX]");
+	}
+	if (AL == 0xfe /* NACK */)
+		goto retry;
+
+	return; // 어느 쪽도 아닌 캐릭터가 오면 무시하고 ACK나 NACK를 계속 기다린다
+}
+
+void near MouQueCmd_ResetCommand()
+// 마우스 리셋트
+{
+	/* work->mouse_exec_wait_int = intack; */ asmout("MOV DWORD PTR DS:[work_mouse_exec_wait_int], OFFSET #intack");
+retry:
+	AL = 0xd4; // to mouse prefix
+	OUT(0x64, AL);
+	do {
+		IN(AL, 0x64);
+		TEST(AL, 0x02);
+	} while (! = 0);
+	AL = 0xff;
+	OUT(0x60, AL);
+	return; // EBX와 EBP는 그대로 해 둔다(실행 중의 명령이 모르게 되기 때문에)
+
+intack:
+	if (AL == 0x00 /* ACK */) {
+		EBX += 4;
+		EBP++;
+		/* goto [(void near *) DS:EBX] */ asmout("JMP DWORD PTR DS:[EBX]");
+	}
+	if (AL == 0xfe /* NACK */)
+		goto retry;
+
+	return; // 어느 쪽도 아닌 캐릭터가 오면 무시하고 0x00(완료)나 NACK를 계속 기다린다
+}
+
+#endif
+
+/*
+
+
+KeyGetKeyType		proc	far	; ax:ebx > ecx
+
+			push	 ds
+			push	 fs
+			pushad
+			mov	 ax, cs
+			mov	 fs, ax
+			add	 ax, 8
+			mov	ebx, offset #cmdline1
+			mov	 ds, ax
+			mov	 byte ptr ds:[KeyGetKeyTypeWaitFlag], 0
+			call	near ptr KeyboardQueueExecute
+			clr	eax
+#loop:
+			cmp	 al, byte ptr ds:[KeyGetKeyTypeWaitFlag]
+			jz	short #loop
+			mov	ebx, offset #cmdline2
+			call	near ptr KeyboardQueueExecute
+			mov	 fs, word ptr ss:[esp][28]
+			mov	ebx, dword ptr ss:[esp][16]
+			mov	esi, KeyWorkBuf
+			mov	ecx,64/4
+#copy:
+			mov	eax, dword ptr ds:[esi]
+			add	esi, 4
+			mov	dword ptr fs:[ebx], eax
+			add	ebx, 4
+			dec	ecx
+			jnz	short #copy
+			mov	eax, dword ptr ds:[KeyWorkBufPtr]
+			sub	eax, KeyWorkBuf
+			mov	dword ptr ss:[esp][24], eax
+			popad
+			pop	 fs
+			pop	 ds
+			ret
+#buf_full:
+			add	ebx, 4
+			mov	 byte ptr ds:[KeyGetKeyTypeWaitFlag], 1
+			dec	ebp
+			jmp	dword ptr ds:[ebx]
+#timeout:
+			push	 ds
+			mov	 ax, cs
+			add	 ax, 8
+			mov	 ds, ax
+			mov	 byte ptr ds:[KeyGetKeyTypeWaitFlag], 2
+			mov	dword ptr ds:[KeyWorkQuePtr], KeyWorkQueue
+			mov	dword ptr ds:[KeyWorkJmp], offset KeyIntDrv_Normal
+			mov	dword ptr ds:[KeyWorkQueFreDw], KeyWorkQueSiz/4
+			pop	 ds
+			clc
+			fret
+
+			align	4
+
+#cmdline1		dd	1, offset KeyQueCmd_WaitBufEnpty
+			dd	2, offset KeyQueCmd_AckSendData, 0f5h	; disable scanning
+			dd	5, offset KeyQueCmd_SetTimer, 200,0,0, offset #timeout
+			dd	2, offset KeyQueCmd_SetBufPtr, KeyWorkBuf
+			dd	2, offset KeyQueCmd_WriteCmdReg, 0a0h
+			dd	2, offset KeyQueCmd_RecieveBytes, 64
+			dd	1, offset KeyQueCmd_CancelTimer
+			dd	1, offset #buf_full
+			dd	0
+
+#cmdline2		dd	2, offset KeyQueCmd_AckSendData, 0f4h	; enable scanning
+			dd	0
+
+KeyGetKeyType		endp
+
+KeyboardSetTypematic	proc	far	; al
+
+			push	 ds
+			push	 fs
+			pushad
+			sub	esp,9*4
+			mov	 dx, cs
+			mov	 cx, ss
+			add	 dx, 8
+			mov	 fs, cx
+			mov	 ds, dx
+			mov	dword ptr ss:[esp][00], 1
+			mov	dword ptr ss:[esp][04], offset KeyQueCmd_WaitBufEnpty
+			mov	dword ptr ss:[esp][08], 2
+			mov	dword ptr ss:[esp][12], offset KeyQueCmd_AckSendData
+			mov	 byte ptr ss:[esp][16], 0f3h
+			mov	dword ptr ss:[esp][20], 2
+			mov	dword ptr ss:[esp][24], offset KeyQueCmd_AckSendData
+			mov	 byte ptr ss:[esp][28], al
+			mov	dword ptr ss:[esp][32], 0
+			mov	ebx, esp
+			call	near ptr KeyboardQueueExecute
+			add	esp,9*4
+			popad
+			pop	 fs
+			pop	 ds
+			ret
+
+;	본래대로라면 에러 처리등도 해야 함
+
+KeyboardSetTypematic	endp
+
+			align	16
+
+
+
+KeyGetA20Mode		proc	far	; > al
+
+			push	 ds
+			push	 fs
+			pushad
+			mov	 ax, cs
+			mov	 fs, ax
+			add	 ax, 8
+			mov	ebx, offset #cmdline1
+			mov	 ds, ax
+			mov	 byte ptr ds:[KeyGetKeyTypeWaitFlag], 0	; 귀찮아서 이 변수를 공유하고 있다
+			call	near ptr KeyboardQueueExecute
+			clr	eax
+#loop:
+			cmp	 al, byte ptr ds:[KeyGetKeyTypeWaitFlag]
+			jz	short #loop
+			mov	ebx, offset #cmdline2
+			call	near ptr KeyboardQueueExecute
+			mov	 al, byte ptr ds:[KeyWorkBuf]
+			
+		;	mov	eax, dword ptr ds:[KeyWorkBufPtr]
+		;	sub	eax, KeyWorkBuf
+
+			mov	 byte ptr ss:[esp][28], al
+			popad
+			pop	 fs
+			pop	 ds
+			ret
+#buf_full:
+			add	ebx, 4
+			mov	 byte ptr ds:[KeyGetKeyTypeWaitFlag], 1
+			dec	ebp
+			jmp	dword ptr ds:[ebx]
+#timeout:
+			push	 ds
+			mov	 ax, cs
+			add	 ax, 8
+			mov	 ds, ax
+			mov	 byte ptr ds:[KeyGetKeyTypeWaitFlag], 2
+			mov	dword ptr ds:[KeyWorkQuePtr], KeyWorkQueue
+			mov	dword ptr ds:[KeyWorkJmp], offset KeyIntDrv_Normal
+			mov	dword ptr ds:[KeyWorkQueFreDw], KeyWorkQueSiz/4
+			pop	 ds
+			clc
+			fret
+
+			align	4
+
+#cmdline1		dd	1, offset KeyQueCmd_WaitBufEnpty
+			dd	2, offset KeyQueCmd_AckSendData, 0f5h	; disable scanning
+			dd	5, offset KeyQueCmd_SetTimer, 200,0,0, offset #timeout
+			dd	2, offset KeyQueCmd_SetBufPtr, KeyWorkBuf
+			dd	2, offset KeyQueCmd_WriteCmdReg, 0d0h
+			dd	2, offset KeyQueCmd_RecieveBytes, 64
+			dd	1, offset KeyQueCmd_CancelTimer
+			dd	1, offset #buf_full
+			dd	0
+
+#cmdline2		dd	2, offset KeyQueCmd_AckSendData, 0f4h	; enable scanning
+			dd	0
+
+KeyGetA20Mode		endp
+
+*/
+
+

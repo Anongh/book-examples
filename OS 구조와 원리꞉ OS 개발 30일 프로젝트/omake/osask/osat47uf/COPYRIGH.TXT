@@ -1,0 +1,121 @@
+
+    OSASK/AT ver. 4.7(USB-FDD image판)의 저작권 정보
+
+  이 아카이브(archive)에 포함되는 파일은, 이하의 8개입니다.
+
+·OSAIMGUF.BIN (1440KB 포맷용 디스크 이미지)
+·README0.TXT   (인스톨 문서)
+·README1.TXT   (OSASK의 문서)
+·README2.TXT   (어플리케이션의 문서)
+·INSTALL.BAT   (인스톨러)
+·IMGTOL.COM
+·COPYRIGH.TXT  (이 파일)
+·LICENSE.TXT   (라이센스문)
+
+  이러한 저작권은 이하의 사람들에게 있습니다.
+
+·平木敬太郞씨  (디스크 이미지내의 ANK 폰트 부분)
+    URL     http://hp.vector.co.jp/authors/VA000874/
+    e-mail  PAF03513@nifty.ne.jp
+
+·今原修一郞씨  (디스크 이미지내의 비디오 드라이버의 일부)
+    URL     http://www.wizard.elec.waseda.ac.jp/~shoe16/
+    e-mail  shoe16@wizard.elec.waseda.ac.jp
+
+·小柳雅明씨  (디스크 이미지내의 POKON47의 일부와 KMANDEL5.BIN의 일부와 S_WORLD.BIN, 
+               MMLPLAY.BIN, LALALU.MML의 모두)
+    URL     http://homepage1.nifty.com/dreaming/
+    e-mail  Koyanagi.Masaaki@nifty.ne.jp
+
+·Solid씨  (디스크 이미지내의 KTETRAC1.BIN와 KCUBE02.BIN의 대부분)
+    URL     http://www.geocities.co.jp/SiliconValley/1157/
+    e-mail  solid_k@geocities.co.jp
+
+·Myurika(尾藤主和)씨  (디스크 이미지내의 MOSKEY.BIN의 모두)
+    e-mail  myurika@pop06.odn.ne.jp
+
+·光成滋生씨  (디스크 이미지내의 KMANDEL5.BIN의 대부분)
+    URL     http://homepage1.nifty.com/herumi/
+    e-mail  herumi@nifty.com
+
+·카린씨  (디스크 이미지내의 CALM21.BIN와 MSWP08.BIN와 OSAGAME.BIN의 모두)
+    URL     http://home.catv.ne.jp/ff/karin/osask/
+    e-mail  karin@mx.catv.ne.jp
+
+·Gaku씨  (디스크 이미지내의 ICALC1.BIN의 대부분)
+    URL     http://eieweb.yz.yamagata-u.ac.jp/~m01873/
+    e-mail  gaku_geo@geocities.co.jp
+
+·Yu=Izumi(泊何水)씨 (디스크 이미지내의 일본어 폰트의 대부분)
+    e-mail  yu_izumi@plum.freemail.ne.jp
+
+·RisaPapa씨 (디스크 이미지내의 SAMPLEJP.TXT와 SAMPLEKR.TXT의 모두)
+
+·大串憲正씨 (디스크 이미지내의 JKTEXT01.TXT~JKTEXT03.TXT의 모두) 
+    e-mail  hiancheng@pop.707.to
+
+·hideyosi씨  (디스크 이미지내의 TEST128.BMP의 모두와 캐릭터로서의 카오)
+    URL     http://lina.hideyosi.com/
+
+·ZAKKY씨  (디스크 이미지내의 ONKAN.BIN와 GyOTAK2.BIN의 모두)
+    URL     http://z-slash.net/
+
+·KIYOTO씨 (디스크 이미지내의 API 루틴의 일부, 윈도우 매니저의 일부,
+              쉘의 일부, BTNTEST.BIN의 모두, ANK 폰트의 일부, 98용 IPL의
+              대부분, 일본어 폰트의 일부, )
+    URL     http://www.geocities.jp/development_room/
+    e-mail  pc98_fmr@yahoo.co.jp
+
+·쿠민씨  (디스크 이미지내의 KATAKK.BIN의 대부분PICTURE0.BIN의 일부)
+    URL     http://www2.csc.ne.jp/~takotyu/
+    e-mail  t_a_k_o@24i.net
+
+·nikq씨  (OSAIMGAT.BIN내의 일시 표시의 요일 판정 부분과 배경화면 JPEG 디코더 엔진
+             (와)과 PICTURE0.BIN의 일부)
+    URL     http://nikq.nothing.sh/
+
+·아끼이씨  (디스크 이미지내의 CVTG03.BIN의 모두)
+    URL     http://koya.marokun.net/
+    e-mail  akkiesoft@marokun.net
+
+·JUGZZY씨 (디스크 이미지내의 SOL.BIN의 모두)
+    URL     http://hp.vector.co.jp/authors/VA036512/
+
+·베이 사이드씨 (디스크 이미지내의 WABA.BIN와 각종 WRP 파일의 모두)
+    URL     http://bayside.upper.jp/
+
+·Makken씨  (디스크 이미지내의 RROSE.BIN안의 회전 루틴의 원작자)
+
+·I.Tak. 씨  (README0.TXT와 README1.TXT와 디스크 이미지내의 BBALL3.BIN,
+               CNTDWN3.BIN, HELO.BIN, RROSE.BIN, KAOSC.HEL, KAOS2C.HEL,
+               ROSE.BMP, CANVAS.BIN, OYAJI.BIN와 비디오 드라이버, API 루틴의
+               일부, 윈도우 매니저의 일부, 그 외에도 많이)
+    URL     http://user.ecc.u-tokyo.ac.jp/~g240845/
+    e-mail  g240845@mail.ecc.u-tokyo.ac.jp
+
+·川合秀美 (나머지 전부)
+    URL     http://k.osask.jp/
+    e-mail  kawai@osask.jp
+
+ TE_DICT0와 WABA 이외의 파일에 대해서는 저작권자의 뜻에 의해 KL-01에 의해 라이
+센스 되고 있습니다. 이 라이센스의 범위에서 이용해 주시기 바랍니다.
+라이센스의 내용에 대해서는 LICENSE.TXT를 봐 주세요. 덧붙여 음악 데이터나
+문서 정보 등은 일부 KL-01의 적용 외가 되어 있습니다. 그러한 취급에 대해서는 사전에
+상담해 주세요.
+
+  TE_DICT0.TXT는 NG라고 하는 에디터에 사전 데이터를 변환하여, 게다가
+큰폭으로 개조한 것입니다. 라이센스는 GPL-2가 적용되고 있습니다. TE_DICT0.BIN
+은 이 텍스트를 컴파일하여 생성했으므로 역시 GPL-2가 적용됩니다.
+
+  WABA의 라이센스는 GPL입니다.
+
+  저작권에 관한 문의는 카와이 히데미가 대표입니다.
+
+  상기 파일의 원시 파일이나 개발 툴은 공개되고 있습니다. 입수를 원하시는 분은,
+아래 홈페이지를 참조해 주세요.
+
+    http://osask.jp/developers.html
+
+  추가로 카와이의 2002.10.03~2003.02.28의 기간에 있어서의 개발 성과는, 특별 인가 법인 정보
+처리 진흥 사업 협회 (IPA)의 「未踏 소프트웨어 창조 사업 未踏 use」에 위탁업무에 의한 것입니다.
+이 장소를 빌려 지원을 받을 수 있었던 것에 대해 감사의 말씀을 드립니다.

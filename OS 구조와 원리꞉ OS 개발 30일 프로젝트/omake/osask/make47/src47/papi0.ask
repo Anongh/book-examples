@@ -1,0 +1,1500 @@
+/* "papi0.ask" ver. 0.6 copyright(C) 2002 H.Kawai(카와이 히데미) */
+/* 64 bit 타입 */
+
+#include "osaskinc.ask"
+
+segment CODE(USE32, PARA);
+default(code == CODE);
+
+#define	DEBUG		0
+#define	DEBUG1		0
+
+/* 워크 에리어 */
+/* 기타 4KB */
+/* 물리 메모리의 빈관리(2KB+2KB+4KB) */
+/* 선형 주소 → 64 bit 주소 4KB */
+/* 64 bit 주소 → 물리 주소 16KB */
+
+/* 잠정 주소 맵 */
+/*
+	0 GB~ 4GB : 실 메모리를 위해서 리저브
+	4 GB~ 8GB : fragmentation용 영역
+	8 GB~12GB : 플로피 디스크(1 미디어로 2MB)
+	8 EB~16EB : 가상 메모리. 무진장하게 있다.
+*/
+/*
+	가상 메모리의 일부가 메모리에 로드 된다
+	떼어 낼 때까지 스토어 하지 않는다.
+	메모리가 분단되는 문제가 있다.
+*/
+
+/* 잠정적인 사양으로 16TB까지를 서포트 */
+/* 가상 메모리는 8TB~ */
+
+struct area_man_struct_sub {
+	unsigned int size;
+	unsigned int addr;
+};
+
+struct area_man_struct {
+	char res0[8];
+	unsigned int use, size0; // 단위는 바이트
+	void [16];
+	area_man_struct_sub data0, data[0];
+	/* use < size0 는 항상 성립한다 */
+	/* data[use]는―1,-1을 가리킨다 */
+	/* data0는 sentinal 0,0 */
+};
+
+struct AAC_Node {
+	unsigned int len, index, data, [4];
+	/* index == 0xffffffff, len == 0은 사용할 수 없다 */
+	/* index의 유효 범위는 [1,0xfffffffe) */
+	/* 0을 사용할 수 없는 것은 안 좋기 때문에, index로+1하고 나서 호출하면 좋을 것이다 */
+};
+
+struct AAC_Head {
+	int limit, last, [8];
+	AAC_Node head, node[0];
+	/* limit는 영역 범위외의 최초의 바이트를 가리킨다 */
+};
+
+struct WORK {
+	void [4096];
+//	int debug;
+	area_man_struct mem20_man[2048];
+	area_man_struct mem24_man[2048];
+	area_man_struct mem32_man[4096];
+	AAC_Head linear_addr64[4096];
+	AAC_Head addr64_addrp[16384];
+};
+
+void near mapping();
+void near map_sub();
+void near unmapping();
+void near init_areastr();
+void near count_free();
+void near get_area();
+void near free_area();
+void near init_AAChead();
+void near AAC_convert();
+void near AAC_regist();
+void near AAC_cancel();
+void near free_memory();
+
+void far PAPI_syscmd()
+/* PAPI 커맨드 접수
+   이것은 반드시 lv0로부터 call된다 */
+{
+	unsigned int Init_sel     ==  2 * 8, TAPI_sel   == 12 * 8;
+	unsigned int pdepte_sel   == 14 * 8, idtgdt_sel    == 15 * 8;
+	int *cmd == FS:EBX;
+	WORK *work == DS:0;
+
+	PUSHAD();
+	MOV(EAX, CS);
+	PUSH(DS);
+	EAX += 8;
+	DS = EAX;
+nextcmd:
+	EAX = *cmd;
+	if (EAX == 0)
+		goto cmd0000;
+	if (EAX == 0x0100)
+		goto cmd0100; /* 초기화 */
+	if (EAX == 0x0104)
+		goto cmd0104; /* PageFault 핸들러 */
+	if (EAX == 0x0108)
+		goto cmd0108; /* mapping */
+	if (EAX == 0x010c)
+		goto cmd010c; /* unmapping */
+	if (EAX == 0x0110)
+		goto cmd0110; /* 이용 가능 물리 메모리 통지(free_memory) */
+	if (EAX == 0x0114)
+		goto cmd0114; /* 물리 메모리 취득(페이지 단위·연속·지정가능) */
+	if (EAX == 0x0118)
+		goto cmd0118; /* delete pages */
+
+	INT(0x03);
+
+cmd0000:
+	POP(DS);
+	[SS:ESP + 16] = EBX;
+	POPAD();
+	return;
+
+cmd0100:
+	/* 초기화 */
+	/* cmd, opt, reserve0, reserve1 */
+	(offset) cmd += 16;
+	EDX = 0;
+	EAX = 0;
+	EDX--;
+	LEA(ESI, (int) work->mem20_man);
+	ECX = 2048 - 40;
+	init_areastr();
+	LEA(ESI, (int) work->mem24_man);
+	ECX = 2048 - 40;
+	init_areastr();
+	LEA(ESI, (int) work->mem32_man);
+	ECX = 4096 - 40;
+	init_areastr();
+	LEA(ESI, (int) work->linear_addr64);
+	ECX = 4096;
+	init_AAChead();
+	LEA(ESI, (int) work->addr64_addrp);
+	ECX = 16384;
+	init_AAChead();
+
+#if (DEBUG)
+PUSHAD();
+EAX = 0;
+EBX = 0;
+EAX--;
+ECX = 4096 / 4;
+do {
+	[DS:EBX] = EAX;
+	EBX += 4;
+	ECX--;
+} while (! = 0);
+POPAD();
+#endif
+
+	goto nextcmd;
+
+cmd0104:
+	asmout("MOV DWORD PTR FS:[EBX+4], OFFSET PageFaultHandler");
+	(short) cmd[8] = CS;
+	(offset) cmd += 12;
+	goto nextcmd;
+
+cmd0108:
+	/* mapping */
+	/* cmd, opt, size, linear, pageset, offset64, addr64(start or link) */
+
+	EAX = cmd[ 4];
+	TEST(EAX, 0x1000); /* over-mapping */
+	if (! = 0) {
+		ECX = cmd[ 8]; /* size */
+		EAX = cmd[12]; /* linear */
+		ECX += 4095;
+		(unsigned int) EAX >>= 12;
+		(unsigned int) ECX >>= 12;
+		EAX++;
+		LEA(ESI, (int) [work->linear_addr64]);
+		AAC_cancel();
+	}
+	if (cmd[32] == 0) {
+		PUSH(DS);
+		PUSH(pdepte_sel);
+		POP(DS);
+		ECX = cmd[ 8]; /* size */
+		EDX = cmd[12]; /* linear */
+		EAX = cmd[28];
+	//	if (ECX ! = 0) {
+			ESI = cmd[ 4] /* opt(bit0~11은 페이지 속성) */;
+			EAX += cmd[20];
+			ESI &= 0xfff;
+			EAX |= ESI;
+//if ((unsigned) EAX >= 0x00800000) {
+//if (ECX ! = 0x00100000)
+//INT(0x03);
+//}
+			mapping();
+	//	}
+		EAX = cmd[ 4];
+		TEST(EAX, 0x1000); /* over-mapping */
+		if (! = 0) {
+			EAX = CR3;
+			CR3 = EAX;
+		}
+		(offset) cmd += 36;
+		POP(DS);
+		goto nextcmd;
+	}
+
+#if 0
+	/* 적당하게 get_memory 해서 paste한다 */
+	ECX = cmd[ 8]; /* size */
+	EDX = cmd[12]; /* linear */
+	LEA(ESI, (int) work->mem20_man);
+	get_area();
+	ESI = pdepte_sel;
+	EAX |= 0x007;
+	PUSH(DS);
+	DS = SI;
+	mapping();
+	EAX = cmd[ 4];
+	TEST(EAX, 0x1000); /* over-mapping */
+	if (! = 0) {
+		EAX = CR3;
+		CR3 = EAX;
+	}
+	(offset) cmd += 36;
+	POP(DS);
+	goto nextcmd;
+#endif
+
+	EAX = cmd[12 /* linear */];
+	EDX = cmd[28 /* addr64 */];
+	ECX = cmd[ 8 /* size */];
+	ESI = cmd[32 /* addr64(high) */];
+	(unsigned int) EAX >>= 12;
+	SHRD(EDX, ESI, 12);
+	(unsigned int) ECX >>= 12;
+	EAX++; /* linear에서 0은 사용할 수 있기때문에 */
+	LEA(ESI, (int) [work->linear_addr64]);
+//	if (ECX ! = 0) {
+		AAC_regist();
+		PUSH(DS);
+		PUSH(pdepte_sel);
+		POP(DS);
+		ECX = cmd[ 8]; /* size */
+		EDX = cmd[12]; /* linear */
+		unmapping();
+		POP(DS);
+//	}
+	(offset) cmd += 36;
+	goto nextcmd;
+
+cmd010c:
+	/* unmapping */
+	/* cmd, opt, size, linear, pageset */
+
+	PUSH(DS);
+	PUSH((int) pdepte_sel);
+	POP(DS);
+	ECX = cmd[ 8]; /* size */
+	EDX = cmd[12]; /* linear */
+	unmapping();
+	POP(DS);
+	ECX = cmd[ 8]; /* size */
+	EAX = cmd[12]; /* linear */
+	ECX += 4095;
+	(unsigned int) EAX >>= 12;
+	(unsigned int) ECX >>= 12;
+	EAX++;
+	LEA(ESI, (int) [work->linear_addr64]);
+	AAC_cancel();
+	(offset) cmd += 20;
+	goto nextcmd;
+
+cmd0110:
+	/* free_memory */
+	ECX = cmd[ 8];
+	EAX = cmd[12];
+	(offset) cmd += 16;
+PUSHFD();
+CLI();
+	TEST(EAX, 0xff000000);
+	/* ESI = (offset) work->mem32_man; */ LEA(ESI, (int) work->mem32_man);
+	if (== 0) {
+		TEST(EAX, 0xfff00000);
+		/* ESI = (offset) work->mem24_man; */ LEA(ESI, (int) work->mem24_man);
+		if (== 0)
+			/* ESI = (offset) work->mem20_man; */ LEA(ESI, (int) work->mem20_man);
+	}
+
+#if (DEBUG)
+PUSH(ECX);
+PUSH(EAX);
+(unsigned int) EAX >>= 12;
+(unsigned int) ECX >>= 12;
+do {
+	BTR([DS:0], EAX);
+	if (CF == 0)
+		INT(0x03);
+	EAX++;
+	ECX--;
+} while (! = 0);
+POP(EAX);
+POP(ECX);
+#endif
+
+	free_area();
+POPFD();
+	goto nextcmd;
+
+cmd0114:
+	/* 물리 메모리 취득(연속) */
+PUSHFD();
+CLI();
+	EAX = cmd[12];
+	ECX = cmd[ 8];
+	if (EAX == 0)
+		goto cmd0114_get32;
+	if (EAX == 1)
+		goto cmd0114_get24;
+	if (EAX == 2)
+		goto cmd0114_get20;
+	if (EAX == 0x80000001)
+		goto cmd0114_special;
+	if (EAX == 0x80000101)
+		goto cmd0114_specialcheck;
+	if (EAX == 0x800000ff)
+		goto cmd0114_specialreport;
+
+	INT(0x03);
+
+cmd0114_get32:
+	/* ESI = (offset) work->mem32_man; */ LEA(ESI, (int) work->mem32_man);
+	get_area();
+	if (ZF == 1) {
+cmd0114_get24:
+		/* ESI = (offset) work->mem24_man; */ LEA(ESI, (int) work->mem24_man);
+		get_area();
+		if (ZF == 1) {
+cmd0114_get20:
+			/* ESI = (offset) work->mem20_man; */ LEA(ESI, (int) work->mem20_man);
+			get_area();
+			if (ZF == 1)
+				INT(0x03);
+		}
+	}
+
+#if (DEBUG)
+PUSH(ECX);
+PUSH(EAX);
+(unsigned int) EAX >>= 12;
+(unsigned int) ECX >>= 12;
+do {
+	BTS([DS:0], EAX);
+	if (CF == 1)
+		INT(0x03);
+	EAX++;
+	ECX--;
+} while (! = 0);
+POP(EAX);
+POP(ECX);
+#endif
+
+POPFD();
+	cmd[16] = EAX;
+	(offset) cmd += 20;
+	goto nextcmd;
+
+cmd0114_special:
+	/* special command */
+	work->mem24_man.data[0]. addr += ECX;
+	work->mem24_man.data[0]. size -= ECX;
+	if ((unsigned) <= 0) {
+		EAX = 0;
+		work->mem24_man.use -= sizeof (area_man_struct_sub);
+		EAX--;
+		work->mem24_man.data[0]. addr = EAX;
+		work->mem24_man.data[0]. size = EAX;
+	}
+	(offset) cmd += 16;
+POPFD();
+	goto nextcmd;
+
+cmd0114_specialcheck:
+	EAX = 0;
+	if ((unsigned) work->mem24_man.data[0]. size >= 0x00e00000)
+		EAX |= 0x01;
+POPFD();
+	cmd[16] = EAX;
+	(offset) cmd += 20;
+	goto nextcmd;
+
+cmd0114_specialreport:
+	area_man_struct *cmd0114_areastr == DS:ESI;
+	EDX = 0;
+	/* ESI = (offset) work->mem20_man; */ LEA(ESI, (int) work->mem20_man);
+	EDX--;
+	count_free(); /* 본래는, init_task에 시킨다(계산 중에 이상해질지도 모르기 때문에) */
+	EDI = cmd0114_areastr->use;
+	cmd[16] = EDX;
+	(unsigned int) EDI /= 8;
+	cmd[20] = ECX;
+	cmd[24] = EAX;
+	cmd[28] = EDI;
+	/* ESI = (offset) work->mem24_man; */ LEA(ESI, (int) work->mem24_man);
+	count_free();
+	EDI = cmd0114_areastr->use;
+	cmd[32] = EDX;
+	(unsigned int) EDI /= 8;
+	cmd[36] = ECX;
+	cmd[40] = EAX;
+	cmd[44] = EDI;
+	/* ESI = (offset) work->mem32_man; */ LEA(ESI, (int) work->mem32_man);
+	count_free();
+	EDI = cmd0114_areastr->use;
+	cmd[48] = EDX;
+	(unsigned int) EDI /= 8;
+	cmd[52] = ECX;
+	cmd[56] = EAX;
+	cmd[60] = EDI;
+POPFD();
+	(offset) cmd += 64;
+	goto nextcmd;
+
+cmd0118:
+	/* delete pages */
+	/* cmd, opt, size64, offset64, addr64(start or link) */
+	/* 이 버젼에서는 offset은 인식하고 있지 않다 */
+	ECX = cmd[ 8]; /* size */
+	EAX = cmd[12];
+	ECX += 4095;
+	ADC(EAX, 0);
+	SHRD(ECX, EAX, 12);
+	EAX = cmd[24];
+	EDX = cmd[28];
+	SHRD(EAX, EDX, 12);
+	EAX++;
+	LEA(ESI, (int) [work->addr64_addrp]);
+	PUSH(ECX);
+	PUSH(EAX);
+	do {
+		AAC_convert();
+		if (CF == 0) {
+			PUSH(ECX);
+			PUSH(EAX);
+			EDX *= 4096;
+			ECX = 4096;
+			EAX = EDX;
+			free_memory();
+			POP(EAX);
+			POP(ECX);
+		}
+		EAX++;
+		ECX--;
+	} while (! = 0);
+	POP(EAX);
+	POP(ECX);
+	AAC_cancel();
+	(offset) cmd += 32;
+	goto nextcmd;
+
+
+	/* pre-load */
+	/* cmd, opt, size, linear, pageset */
+	/* cmd, opt, size, addr64 */
+
+	/* make-signal */
+	/* 장래 이 커맨드의 형태는 바뀌겠지만 우선은 이 형식으로 한다 */
+
+
+	/* 영역 관리 서비스 */
+	/* 지정 용량 확보(포함한 n바이트 삽입) */
+	/* 부분개방(포함한 전개방) */
+
+
+	/* cmd, opt, size, linear, pageset, offset64, addr64(start or link) */
+
+
+
+}
+
+
+void near mapping()
+/* DS에 mapspace-module
+   EAX에 물리 주소
+   ECX에 사이즈
+   EDX에 선형 주소 */
+/* 향후 물리 주소가 아니고 디바이스 주소가 된다 */
+{
+	unsigned int pteofs == EDI;
+	int linear == EDX, size == EBP, size2 == EBX;
+	PUSHAD();
+	size = ECX;
+	do {
+		EBX = linear;
+		pteofs = linear;
+		(unsigned int) EBX >>= 22;
+		pteofs &= 0x003ff000;
+		ECX = 1024 * 4096;
+	//	ESI = [DS:EBX * 4];
+		asmout("MOV ESI, DWORD PTR DS:[EBX*4]");
+		ECX -= pteofs;
+		pteofs /= 1024;
+		if ((unsigned) ECX >= size)
+			ECX = size;
+		ESI += pteofs;
+		size2 = ECX;
+		(unsigned int) ECX /= 4096;
+		map_sub();
+		linear += size2;
+		size -= size2;
+	} while ((unsigned) > 0);
+	POPAD();
+	return;
+}
+
+void near map_sub()
+/* DS:ESI로부터 매핑
+   EAX에 최초의 값(함：애트리뷰트(attribute) )
+   ECX는 페이지 수 */
+{
+	int *pte == DS:ESI;
+	do {
+		*pte = EAX;
+
+#if (DEBUG)
+PUSH(DS);
+PUSH(ECX);
+PUSH(EAX);
+MOV(ECX, CS);
+ECX += 8;
+if ((unsigned) EAX >= 0x00268000) {
+	if ((unsigned) EAX < 0x08000000) {
+		(unsigned int) EAX >>= 12;
+		DS = ECX;
+		BT([DS:0], EAX);
+		if (CF == 0) {
+			ESP += 16;
+			POPAD();
+			INT(0x03);
+		}
+	}
+}
+POP(EAX);
+POP(ECX);
+POP(DS);
+#endif
+
+		(offset) pte += 4;
+		EAX += 0x1000;
+		ECX--;
+	} while (! = 0);
+	return;
+}
+
+void near mapping1p()
+/* DS에 mapspace-module
+   EAX에 물리 주소
+   EDX에 선형 주소 */
+/* 향후, 물리 주소가 아니고 디바이스 주소가 된다 */
+{
+	unsigned int pteofs == EDI;
+	unsigned int linear == EDX;
+	PUSH(EDI);
+	PUSH(ESI);
+	PUSH(linear);
+	pteofs = linear;
+	linear >>= 22;
+	pteofs &= 0x003ff000;
+//	ESI = [DS:EDX * 4];
+	asmout("MOV ESI, DWORD PTR DS:[EDX*4]");
+	pteofs /= 1024;
+//	ESI += pteofs;
+	POP(linear);
+//	[DS:ESI] = EAX;
+	[DS:ESI + EDI] = EAX;
+
+#if (DEBUG)
+PUSH(DS);
+PUSHAD();
+MOV(ECX, CS);
+ECX += 8;
+if ((unsigned) EAX >= 0x00268000) {
+	(unsigned int) EAX >>= 12;
+	DS = ECX;
+	BT([DS:0], EAX);
+	if (CF == 0)
+		INT(0x03);
+}
+POPAD();
+POP(DS);
+#endif
+
+	POP(ESI);
+	POP(EDI);
+	return;
+}
+
+void near unmapping()
+/* 페이지를 떼낼 뿐 */
+{
+	unsigned int pteofs == EDI;
+	int linear == EDX, size == EBP, size2 == EBX;
+	int *pte == DS:ESI;
+	PUSHAD();
+	size = ECX;
+	do {
+		EBX = linear;
+		pteofs = linear;
+		(unsigned int) EBX >>= 22;
+		pteofs &= 0x003ff000;
+		ECX = 1024 * 4096;
+	//	(offset) pte = [DS:EBX * 4];
+		asmout("MOV ESI, DWORD PTR DS:[EBX*4]");
+		ECX -= pteofs;
+		pteofs /= 1024;
+		if ((unsigned) ECX >= size)
+			ECX = size;
+		(offset) pte += pteofs;
+		size2 = ECX;
+		do {
+			*pte &= 0xfffffffe; /* not-present */
+			(offset) pte += 4;
+			ECX -= 4096;
+		} while (! = 0);
+		linear += size2;
+		size -= size2;
+	} while ((unsigned) > 0);
+	asmout("MOV EAX, CR3");
+	asmout("MOV CR3, EAX");
+	POPAD();
+	return;
+}
+
+void near get_area()
+/* DS:ESI에 관리 정보 구조체의 포인터.
+   ECX에 요구 연속 사이즈.
+   EAX에 페이지 주소. -1의 경우, 에러.  */
+
+/* 구조체의 최초 8바이트는 리저브
+   다음의 8바이트는 사용 바이트수와 구조체 사이즈
+   그 다음의 16바이트는 리저브
+   그래서 최초의 데이터는 +40부터 */
+
+/* first_fit 알고리즘
+   액세스 경합 등은 상위 루틴으로 해결
+   ZF == 1은 에러 (EAX == -1) */
+{
+	area_man_struct *work == DS:ESI;
+	area_man_struct_sub *dat == DS:EBX;
+	unsigned int req == ECX;
+	PUSH((offset) dat);
+	/* LEA((offset) dat,[(offset) work->data]); */ LEA((offset) dat, (int) [work->data]);
+
+	if (req > dat->size) {
+		do {
+			unsigned int next_size == EAX;
+			next_size = dat[sizeof (area_man_struct_sub)]. size;
+			(offset) dat += sizeof (area_man_struct_sub);
+		} while (next_size < req);
+	}
+
+	EAX = dat->addr;
+	if (EAX ! = 0xffffffff) {
+		dat->addr += req;
+		dat->size -= req;
+		if (== 0) {
+			work->use -= sizeof (area_man_struct_sub);
+			/* 전송(sizeof (area_man_struct_sub) == 8을 가정) */
+			PUSH(ECX);
+			PUSH(EAX);
+			do {
+				EAX = /* (dat + 8)->size */ dat[8]. size;
+				ECX = /* (dat + 8)->addr */ dat[8]. addr;
+				dat->size = EAX;
+				dat->addr = ECX;
+				(offset) dat += 8;
+			} while (EAX ! = 0xffffffff);
+			POP(EAX);
+			POP(ECX);
+			CMP(EAX, 0xffffffff); /* for ZF == 0 */
+		}
+		/* 여기에 올 때, ZF == 0 */
+	}
+	POP((offset) dat);
+	return;
+}
+
+void near free_area()
+/* DS:ESI에 관리 정보 구조체 포인터.  */
+/* ECX에 해방 사이즈.  */
+/* EAX에 페이지 주소.  */
+/* 전레지스터 보존 */
+/* 2분 검색 알고리즘 */
+/* 액세스 경합 등은 상위 루틴으로 해결 */
+/* ZF == 1은 에러(관리 영역 부족) */
+{
+	area_man_struct *work == DS:ESI;
+	area_man_struct_sub *dat == DS:EBX;
+	unsigned int dat0 == EDX, dat1 == EDI;
+	unsigned int size == ECX, addr == EAX;
+	PUSH(dat1);
+	dat1 = work->use;
+	PUSH(dat0);
+	PUSH((offset) dat);
+	LEA(dat0, (int) work->data0);
+//	dat1 = (offset) work->data[dat1]; // 컴파일이 잘 안됨
+	LEA(dat1, [dat1 + (offset) work->data]);
+
+	LEA((offset) dat, [dat0 + dat1]);
+	(offset) dat /= 2;
+	(offset) dat &= 0xfffffff8; // 8바이트
+	if ((unsigned) (offset) dat > dat0) {
+		for (;;) {
+			if (addr < dat->addr) {
+				dat1 = (offset) dat;
+				(offset) dat += dat0;
+				(offset) dat /= 2;
+				(offset) dat &= 0xfffffff8; // 8바이트 
+				if ((unsigned) (offset) dat > dat0)
+					continue;
+				break;
+			}
+			/* == 는 있을 수 없다 */
+			dat0 = (offset) dat;
+			(offset) dat += dat1;
+			(offset) dat /= 2;
+			(offset) dat &= 0xfffffff8; // 8바이트 
+			if ((unsigned) (offset) dat > dat0)
+				continue;
+			break;
+		}
+	}
+
+	/* dat->addr < addr < dat[8]->addr */
+
+	EDI = dat->size;
+	LEA(EDX, [addr + size]);
+	EDI += dat->addr;
+	if (! = 0) {
+		/* sentinal이 아니다 */
+		if (addr == EDI) {
+			/* 위와의 융합은 가능 */
+			dat->size += size;
+			if (EDX == dat[8]. addr) {
+				/* 아래와의 융합도 가능 */
+				EDX = dat[8]. size;
+				dat->size += EDX;
+				/* 전송(sizeof (area_man_struct_sub) == 8을 가정) */
+				(offset) dat += sizeof (area_man_struct_sub);
+				PUSH(ECX);
+				PUSH(EAX);
+				do {
+					EAX = /* (dat + 8)->size */ dat[8]. size;
+					ECX = /* (dat + 8)->addr */ dat[8]. addr;
+					dat->size = EAX;
+					dat->addr = ECX;
+					(offset) dat += 8;
+				} while (EAX ! = 0xffffffff);
+				work->use -= sizeof (area_man_struct_sub);
+				POP(EAX);
+				POP(ECX);
+				CMP(addr, 0xffffffff); // for ZF == 0
+			}
+			POP((offset) dat);
+			POP(dat0);
+			POP(dat1);
+			return;
+		}
+	}
+
+	if (EDX == dat[8]. addr) {
+		/* 아래와의 융합은 가능 */
+		dat[8]. size += size; // ZF = 0
+		dat[8]. addr = addr;
+		POP((offset) dat);
+		POP(dat0);
+		POP(dat1);
+		return;
+	}
+
+	/* 융합 불가능·요점 삽입 */
+
+	(offset) dat = work->use;
+	(offset) dat += sizeof (area_man_struct_sub); 
+	if ((unsigned) (offset) dat < work->size0) { /* 이것이 성립하지 않는 경우, ZF == 1 */
+		work->use = (offset) dat;
+		LEA((offset) dat, [/* (offset) dat */ EBX + (offset) work->data]);
+	//	PUSH(EDX);
+		PUSH(ECX);
+		do {
+			ECX = /* (dat - 8)->size */ dat[-8]. size;
+			EDX = /* (dat - 8)->addr */ dat[-8]. addr;
+			dat->size = ECX;
+			dat->addr = EDX;
+			(offset) dat -= 8;
+		} while (addr < EDX); // 항상 ZF == 0
+		POP(ECX);
+	//	POP(EDX);
+		/* (dat + 8)->size */ dat[8]. size = size;
+		/* (dat + 8)->addr */ dat[8]. addr = addr;
+	}
+	POP((offset) dat);
+	POP((offset) dat0);
+	POP((offset) dat1);
+	return;
+}
+
+
+/* 최초로 이용하고 싶은 부분을 dispose해 둔다. 그러면 로드하지 않는다.  */
+/* 처음에 전범위가 dispose되고, 나머지는 이용이 끝나면 dispose한다 */
+
+
+// getmemory();
+// freememory();
+// searchpage(); /* 64 bit 페이지가 캐쉬되고 있는지 어떤지를 조사해, 캐쉬되고 있으면 물리 주소를 돌려준다 */
+/* 현재, 미스 히트==신규 페이지 */
+// disposepage(); /* 지정된 64bit 페이지는 공백이 된다 */
+
+/*
+	PageFault → 선형 주소로부터 64bit 주소에 변환
+	→ 판명된 64 bit 주소로 searchpage();
+	(1) 발견되지 않는 경우, getmemory해서 로드(dispose 되고 있는지를 조사해, 되고 있으면 아무것도 하지 않는다).
+	(2) 발견되면 그것을 맵.
+	어쨌든 해당 페이지를 매핑.
+
+*/
+
+
+/* 더미 헤더도 필요(여기는 검색 대상은 되지 않는다) */
+/* 터미네이터는, len = 0, addrp = -1, addr64 = -1 */
+
+/* 16바이트로 1 페이지. 4 KB로 256 페이지(1MB) */
+
+#if 0
+
+void near cacheoutpases()
+/* EDX:EAX로부터 ECX바이트 */
+{
+	/* sort되고 있으므로 2분 검색으로 찾을 수 있지만, 부실로 선형 검색 */
+	CachePageNode *node == DS:EBX;
+
+	PUSH((offset) node);
+	PUSH(EDX);
+	PUSH(ECX);
+	PUSH(EAX);
+	(offset) node = work-> ;
+	SHRD(EAX, EDX, 12);
+
+	/* EAX를 찾아 ECX분을 소거 */
+	if ((unsigned) EAX >= node->addr64[0]) {
+		do {
+			(offset) node += sizeof (CachePageNode);
+		} while ((unsigned) EAX >= node->addr64[0]);
+	}
+	/* 앞질러 버리고 있으므로 1개 되돌려 판정 */
+	(offset) node -= sizeof (CachePageNode);
+	EAX -= node->addr64[0];
+	if (== 0) {
+		if (ECX < node->len) {
+			node->len -= ECX;
+			node->addrp += ECX;
+			(unsigned int) ECX /= 4096;
+			node->addr64[0] += ECX;
+			POP(EAX);
+			POP(ECX);
+			POP(EDX);
+			POP((offset) node);
+			return;
+		}
+		do {
+			EAX = node[16 /* sizeof (CachePageNode) */]. len;
+			ECX = node[16 /* sizeof (CachePageNode) */]. addrp;
+			EDX = node[16 /* sizeof (CachePageNode) */]. addr64[0];
+			node->len = EAX;
+			node->addrp = ECX;
+			node->addr64[0] = EDX;
+		} while (EDX ! = 0xffffffff);
+ret:
+		POP(EAX);
+		POP(ECX);
+		POP(EDX);
+		POP((offset) node);
+		return;
+	}
+	EAX *= 4096;
+	EDX = EAX;
+	EAX += ECX;
+	ECX = node->len;
+	node->len = EDX;
+	if (EAX == ECX)
+		goto ret;
+	/* EAX + addrp, EAX / 4096 + addr64[0] : 다음 노드의 선두 */
+	/* len - EAX : 다음 노드의 len */
+	PUSH(EBP);
+	PUSH(ESI);
+	PUSH(EDI);
+	EDX = node->addrp;
+	ECX -= EAX; /* new-len */
+	EDX += EAX;
+	EAX /= 4096;
+	EAX += node->addr64[0];
+	do {
+		(offset) node += sizeof (CachePageNode);
+		EBP = node->len;
+		ESI = node->addrp;
+		EDI = node->addr64[0];
+		node->len = ECX;
+		node->addrp = EDX;
+		node->addr64[0] = EAX;
+		ECX = EBP;
+		ESI = EDX;
+		EDI = EAX;
+	} while (EAX ! = 0xffffffff);
+	POP(EAX);
+	POP(ECX);
+	POP(EDX);
+	POP((offset) node);
+	return;
+}
+
+#endif
+
+/* cache관리는 AAC_Node로 실시한다. index는 addr64를 12bit 쉬프트 해서 취급하므로, len도 data도 12bit 쉬프트 해서 취급한다 */
+
+/* dispose범위 파악은 area_man_struct로 실시한다. dispose되고 있는 공간이 구조체에 기록된다 */
+/* 지정범위를 dispose하는 것은 free_area로 완성되지만, 지정범위를 dispose로부터 떼어내는 것은 할 수 없기 때문에, 이것을 새롭게 준비한다 */
+
+/* 페이징의 선형주소로부터 addr64의 변환도 AAC_Node로 실시한다.  */
+
+
+void near AAC_searchsub()
+/* 2분 검색으로 찾는다 */
+/* EAX에 index. EDX와 EDI를 파괴 .EBX에 되돌려준다. */
+{
+	AAC_Node *node == DS:EBX;
+	AAC_Head *head == DS:ESI;
+	unsigned int node0 == EDI, node1 == EDX, index == EAX;
+
+	LEA(node0, (int) head->head);
+	node1 = head->last;
+
+	LEA((offset) node, [node0 + node1]);
+	(offset) node /= 2;
+	(offset) node &= 0xfffffff0; /* 16바이트 */
+
+	if ((unsigned) (offset) node > node0) {
+		for (;;) {
+			if (index < node->index) {
+				node1 = (offset) node;
+				(offset) node += node0;
+				(offset) node /= 2;
+				(offset) node &= 0xfffffff0; /* 16바이트 */
+				if ((unsigned) (offset) node > node0)
+					continue;
+				break;
+			}
+			/* 동일해도 속행 */
+			node0 = (offset) node;
+			(offset) node += node1;
+			(offset) node /= 2;
+			(offset) node &= 0xfffffff0; /* 16바이트 */
+			if ((unsigned) (offset) node > node0)
+				continue;
+			break;
+		}
+	}
+	/* node->index <= index < node[16]. index */
+	return;
+}
+
+void near AAC_convert()
+/* EAX(index) → EDX(data) */
+/* DS:ESI에 struct AAC_Head에의 포인터를 */
+/* 변환에 성공하면 CF = 0, 실패하면 CF = 1 */
+{
+	AAC_Node *node == DS:EBX;
+	AAC_Head *head == DS:ESI;
+	unsigned int index == EAX;
+
+	PUSH((offset) node);
+	PUSH(EDI);
+
+	AAC_searchsub(); /* EDX와 EDI는 파괴된다 */
+	/* node->index <= index < node[16]. index */
+
+	EDX = index;
+	POP(EDI);
+	EDX -= node->index;
+	if ((unsigned) EDX < node->len) {
+		EDX += node->data; /* CF = 0 */
+		POP((offset) node);
+		return;
+	}
+	STC(); /* CF = 1 */;
+	POP((offset) node);
+	return; 
+}
+
+void near AAC_regist()
+/* 컨버터 규칙 추가 */
+/* 중복 등록은 허락하지 않는다 */
+/* EAX(index), EDX(data), ECX(len) */
+{
+	AAC_Node *node == DS:EBX;
+	AAC_Head *head == DS:ESI;
+
+	PUSH((offset) node);
+	PUSH(EDI);
+	PUSH(EDX);
+
+	AAC_searchsub(); /* EDX와 EDI는 파괴된다 */
+	/* node->index <= EAX < node[16]. index */
+
+	EDI = node->len;
+	EDX = EDI;
+	EDI += node->index;
+	EDX += node->data;
+	EDI ^= EAX;
+	EDX ^= [SS:ESP];
+	EDI |= EDX;
+	if (== 0) {
+		/* 추가 성공 */
+		node->len += ECX;
+		EDX = [SS:ESP];
+		PUSH(EAX);
+		EAX += ECX;
+		EDX += ECX;
+		EAX ^= node[16]. index;
+		EDX ^= node[16]. data;
+		EAX |= EDX;
+		if (== 0) {
+			/* 통합 */
+			EAX = node[16]. len;
+			head->last -= sizeof (AAC_Node);
+			node->len += EAX;
+			do {
+				(offset) node += sizeof (AAC_Node);
+				EAX = node[16]. index;
+				EDI = node[16]. len;
+				EDX = node[16]. data;
+				node->index = EAX;
+				EAX++;
+				node->len = EDI;
+				node->data = EDX;
+			} while (! = 0);
+		}
+		POP(EAX);
+		POP(EDX);
+		POP(EDI);
+		POP((offset) node);
+		return;
+	}
+	/* 아래와의 통합을 조사한다 */
+	EDX = [SS:ESP];
+	PUSH(EAX);
+	EAX += ECX;
+	EDX += ECX;
+	EAX ^= node[16]. index;
+	EDX ^= node[16]. data;
+	EAX |= EDX;
+	if (== 0) {
+		/* 통합 */
+		POP(EAX);
+		POP(EDX);
+		node[16]. index = EAX;
+		node[16]. data = EDX;
+		POP(EDI);
+		POP((offset) node);
+		return;
+	}
+	/* 삽입 */
+	EAX = [SS:ESP];
+	EDX = [SS:ESP + 4];
+	PUSH(ESI);
+	(offset) node += sizeof (AAC_Node);
+	EDI = head->limit;
+	head->last += sizeof (AAC_Node);
+	PUSH(ECX);
+	if ((unsigned) head->last >= EDI)
+		goto err;
+	do {
+		EBP = node->index;
+		ESI = node->len;
+		EDI = node->data;
+		node->index = EAX;
+		node->len = ECX;
+		node->data = EDX;
+		(offset) node += sizeof (AAC_Node);
+		EAX = EBP;
+		EBP++;
+		ECX = ESI;
+		EDX = EDI;
+	} while (! = 0);
+	node->index = EAX;
+	node->len = ECX;
+	node->data = EDX;
+	POP(ECX);
+	POP(ESI);
+	POP(EAX);
+	POP(EDX);
+	POP(EDI);
+	POP((offset) node);
+	return;
+err:
+	INT(0x03);
+}
+
+void near AAC_cancel()
+/* 컨버터 규칙 삭제 */
+/* 등록하고 있지 않는 부분을 삭제해도 괜찮다 */
+/* EAX(index), ECX(len) */
+{
+	AAC_Node *node == DS:EBX;
+	AAC_Head *head == DS:ESI;
+	unsigned int index == EAX;
+
+	PUSH((offset) node);
+	PUSH(EDI);
+	PUSH(EDX);
+	PUSH(ECX);
+	PUSH(index);
+
+	AAC_searchsub(); /* EDX와 EDI는 파괴된다 */
+	/* node->index <= index < node[16]. index */
+
+	for (;;) {
+		if (ECX == 0)
+			goto ret;
+		EDX = node->index;
+		EDX += node->len;
+		if ((unsigned) EDX > index) {
+			/* 위의 블록의 일부 또는 전부를 지운다 */
+			/* (ECX가 너무 커 지우지 못할지도 모른다) */
+			if (node->index == index) {
+cont2:
+				EDX = node->len;
+				if ((unsigned) ECX < EDX) {
+					/* 선두부터 지우지만, 나머지는 있다 */
+					node->len -= ECX;
+					node->index += ECX;
+					node->data += ECX;
+					goto ret;
+				}
+del:
+				head->last -= sizeof (AAC_Node);
+				index += EDX;
+				ECX -= EDX;
+				PUSH(EAX);
+				PUSH((offset) node);
+				do {
+					EAX = node[16]. index;
+					EDI = node[16]. len;
+					EDX = node[16]. data;
+					node->index = EAX;
+					EAX++;
+					node->len = EDI;
+					node->data = EDX;
+				//	(LEA) (offset) node += sizeof (AAC_Node);
+					LEA(EBX, [EBX + 16]);
+				} while (! = 0);
+				POP((offset) node);
+				POP(EAX);
+				if ((unsigned) node->index <= index)
+					continue;
+				(offset) node -= sizeof (AAC_Node);
+				continue;
+			}
+			/* 도중부터 지운다 */
+			/* ECX가 적으면 분할된다 */
+			/*
+				if (node->index + node->len <= index + ECX)
+					끝(말미)까지 없앤다
+				else
+					분할된다(분할 후, 종료)
+			*/
+			EDX = index;
+			EDI = node->len;
+			EDX -= node->index; /* EDX = 선두부터 남는 사이즈 */
+			PUSH(EDI);
+			EDI -= EDX; /* EDI = 한 번에 소거할 수 있는 사이즈 */
+			node->len = EDX;
+			index += EDI; /* index = node->index + 구node->len */
+			ECX -= EDI;
+			POP(EDX); /* EDX = 구node->len */
+			if ((unsigned) >= 0) /* 도중부터 끝까지 없앤다 */
+				continue;
+			/* 분할된다(분할 후, 종료) */
+			/* ECX는 부의 값 */
+			EDX += node->data;
+			(offset) node += sizeof (AAC_Node);
+			index += ECX;
+			EDX += ECX;
+			EDI = head->limit;
+			head->last += sizeof (AAC_Node);
+			ECX =- ECX;
+			if ((unsigned) head->last >= EDI)
+				goto err;
+			PUSH(ESI);
+			PUSH(EBP);
+			do {
+				EBP = node->index;
+				ESI = node->len;
+				EDI = node->data;
+				node->index = EAX;
+				node->len = ECX;
+				node->data = EDX;
+				(offset) node += sizeof (AAC_Node);
+				EAX = EBP;
+				EBP++;
+				ECX = ESI;
+				EDX = EDI;
+			} while (! = 0);
+			POP(EBP);
+			POP(ESI);
+			node->index = EAX;
+			node->len = ECX;
+			node->data = EDX;
+			goto ret;
+		}
+		(offset) node += sizeof (AAC_Node);
+		EDX = node->index;
+		EDX -= index;
+		ECX -= EDX;
+		index = node->index;
+		if ((unsigned) > 0)
+			goto cont2;
+ret:
+		POP(index);
+		POP(ECX);
+		POP(EDX);
+		POP(EDI);
+		POP((offset) node);
+		return;
+	}
+err:
+	INT(0x03);
+}
+
+void near init_areastr()
+/* EAX = 0; EDX = -1; ECX = size0;
+  area_man_struct *areastr == DS:ESI; */
+{
+	area_man_struct *areastr == DS:ESI;
+
+	areastr->use = EAX;
+	areastr->size0 = ECX;
+	areastr->data0.size = EAX;
+	areastr->data0.addr = EAX;
+	areastr->data[0]. size = EDX;
+	areastr->data[0]. addr = EDX;
+	return;
+}
+
+void near free_memory()
+/* EAX, ECX */
+{
+	WORK *work == DS:0;
+	PUSH(ESI);
+	TEST(EAX, 0xff000000);
+	/* ESI = (offset) work->mem32_man; */ LEA(ESI, (int) work->mem32_man);
+	if (! = 0)
+		goto free;
+	TEST(EAX, 0xfff00000);
+	/* ESI = (offset) work->mem24_man; */ LEA(ESI, (int) work->mem24_man);
+	if (! = 0)
+		goto free;
+	/* ESI = (offset) work->mem20_man; */ LEA(ESI, (int) work->mem20_man);
+free:
+
+#if (DEBUG1)
+unsigned int pdepte_sel   == 14 * 8, idtgdt_sel    == 15 * 8;
+PUSH(DS);
+PUSHAD();
+/* EDX는 이미 사용되어 있지는 않는가?  */
+EDX = EAX;
+LEA(EBP, [EAX + ECX]);
+EAX = pdepte_sel;
+EBX = 0x4200; /* 4.5MB */
+DS = EAX;
+LSL(ECX, EAX);
+ECX -= EBX;
+do {
+	EAX = [DS:EBX];
+	EBX += 4;
+	TEST(AL, 0x01);
+	if (! = 0) {
+		EAX &= 0xfffff000;
+		if ((unsigned) EDX <= EAX) {
+			if ((unsigned) EAX < EBP) {
+				[DS:EBX - 4] = AL;
+			//	INT(0x03);
+			}
+		}
+	}
+	ECX -= 4;
+} while ((unsigned) > 0);
+POPAD();
+POP(DS);
+#endif
+
+#if (DEBUG)
+PUSH(ECX);
+PUSH(EAX);
+(unsigned int) EAX >>= 12;
+(unsigned int) ECX >>= 12;
+do {
+	BTR([DS:0], EAX);
+	if (CF == 0)
+		INT(0x03);
+	EAX++;
+	ECX--;
+} while (! = 0);
+POP(EAX);
+POP(ECX);
+#endif
+
+	free_area();
+	POP(ESI);
+	return;
+}
+
+void near init_AAChead()
+/* EAX = 0; EDX = -1; ECX = size;
+  AAC_Head *head == DS:ESI; */
+{
+	AAC_Head *head == DS:ESI;
+	PUSH(EBX);
+	LEA(EBX, (int) head->node[0]);
+	head->last = EBX;
+	LEA(EBX, [ESI + ECX]);
+	head->limit = EBX;
+	head->head.len = EAX;
+	head->head.index = EAX;
+	head->node[0]. len = EAX;
+	head->node[0]. index = EDX;
+	POP(EBX);
+	return;
+}
+
+void near count_free()
+/* DS:ESI에 관리 정보 구조체 포인터.  */
+/* ECX에 합계 사이즈가 리턴되고, EAX에 최대 사이즈가 리턴된다 */
+{
+	area_man_struct *work == DS:ESI;
+	area_man_struct_sub *dat == DS:EBX;
+	PUSH(EBX);
+	PUSH(EDX);
+	LEA((offset) dat, (int) [work->data]);
+	EDX = 0;
+	EAX = 0;
+	EDX--;
+	ECX = 0;
+	if (EDX ! = dat->size) {
+		do {
+			ECX += dat->size;
+			if ((unsigned) EAX <= dat->size)
+				EAX = dat->size;
+			(offset) dat += sizeof (area_man_struct_sub);
+		} while (EDX ! = dat->size);
+	}
+	POP(EDX);
+	POP(EBX);
+	return;
+}
+
+void far PageFaultHandler()
+{
+	unsigned int pdepte_sel   == 14 * 8, idtgdt_sel    == 15 * 8;
+	WORK *work == DS:0;
+
+	PUSH(DS);
+	PUSHAD();
+	MOV(EAX, CS);
+	EAX += 8;
+	DS = EAX;
+	asmout("TEST BYTE PTR SS:[ESP+36], 01H");
+	if (== 0) {
+		/* 페이지 부재 */
+		EAX = CR2;
+		(unsigned int) EAX >>= 12;
+		LEA(ESI, (int) [work->linear_addr64]);
+		EAX++;
+		AAC_convert();
+		if (CF == 1) {
+			EAX = CR2;
+			ECX = [SS:ESP + 40]; /* EIP */
+			EDX = [SS:ESP + 44]; /* CS */
+
+ESI = [SS:ESP + 4]; /* ESI */
+			INT(0x03); /* map하지 않는데 참조되었다 */
+		}
+		LEA(EAX, [EDX + 1]);
+		LEA(ESI, (int) [work->addr64_addrp]);
+		AAC_convert();
+		if (CF == 1) {
+			/* 신규 페이지라면 억지로 가정 */
+			PUSH(EAX);
+			ECX = 4096;
+			PUSH(ESI);
+			/* ESI = (offset) work->mem32_man; */ LEA(ESI, (int) work->mem32_man);
+			get_area();
+			if (ZF == 1) {
+				/* ESI = (offset) work->mem24_man; */ LEA(ESI, (int) work->mem24_man);
+				get_area();
+				if (ZF == 1) {
+					/* ESI = (offset) work->mem20_man; */ LEA(ESI, (int) work->mem20_man);
+					get_area();
+					if (ZF == 1)
+						INT(0x03);
+				}
+			}
+
+#if (DEBUG)
+PUSH(ECX);
+PUSH(EAX);
+(unsigned int) EAX >>= 12;
+(unsigned int) ECX >>= 12;
+do {
+	BTS([DS:0], EAX);
+	if (CF == 1)
+		INT(0x03);
+	EAX++;
+	ECX--;
+} while (! = 0);
+POP(EAX);
+POP(ECX);
+#endif
+
+		//	LEA(ESI, (int) [work->addr64_addrp]);
+			POP(ESI);
+			EDX = EAX;
+			ECX = 0;
+		//	EAX = [SS:ESP]; /* index(addr64 + 1) */
+			POP(EAX);
+		//	ECX = 1;
+			ECX++;
+			(unsigned int) EDX >>= 12;
+
+#if (DEBUG1)
+PUSH(DS);
+PUSHAD();
+/* EDX는 이미 사용되어 있지 않는가?  */
+EAX = pdepte_sel;
+EBX = 0x4200; /* 4.5MB */
+DS = EAX;
+LSL(ECX, EAX);
+ECX -= EBX;
+do {
+	EAX = [DS:EBX];
+	EBX += 4;
+	TEST(AL, 0x01);
+	if (! = 0) {
+		(unsigned int) EAX >>= 12;
+		if (EAX == EDX) {
+			EDX = CR2;
+			INT(0x03);
+		}
+	}
+	ECX -= 4;
+} while ((unsigned) > 0);
+POPAD();
+POP(DS);
+#endif
+			AAC_regist();
+		}
+		/* 물리 주소 :EDX */
+		EDX <<= 12;
+		PUSH((int) pdepte_sel);
+		POP(DS);
+		LEA(EAX, [EDX + 0x007]);
+		EDX = CR2;
+	//	ECX = 4096;
+	//	EDX &= 0xfffff000;
+		mapping1p();
+		POPAD();
+		POP(DS);
+		ESP += 4;
+		IRETD();
+	}
+	INT(0x03);
+}
+
+/*
+
+
+  ·페이징 공간 오픈/클로우즈
+  ·mapping/unmapping 인수는, opt(32bit), 사이즈(32bit)와 주소(64bit).
+  ·free load(포함한：LOCK···우선 순위가 있다).
+  ·free Store
+  ·disable cashe
+
+*/

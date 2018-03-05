@@ -1,0 +1,8 @@
+/* "TOWNS15.ASK" for TOWNS ver. 0.0 copyright(C) 2004 I.Tak */
+
+/* 현재, towns/vesa16.ask 와 공용입니다
+ * HWcursor 등의 야망도 있고 (←호언 장담)
+ * makefile를 쓰는 것도 귀찮아서 이런 식으로 */
+
+#define TOWNS15
+#include "vesa16.ask"

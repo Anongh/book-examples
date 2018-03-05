@@ -1,0 +1,1831 @@
+// "tapi0.ask" ver. 0.4 copyright(C) 2002 H.Kawai(카와이 히데미)
+
+/* "for DEBUG"를 검색하면 디버그를 위해서 추가된 부분을 찾아낼 수 있다 */
+
+#include "osaskinc.ask"
+
+segment CODE(USE32, PARA);
+default(code == CODE);
+
+struct TAPI_TSS386 {  // 모두 TL-0
+	short BackLink, [2];
+	int stack0_ESP; short stack0_SS, [2];
+	int stack1_ESP; short stack1_SS, [2];
+	int stack2_ESP; short stack2_SS, [2];
+	int CR3;
+	int EIP;
+	int EFLAGS;
+	int EAX, ECX, EDX, EBX;
+	int ESP, EBP, ESI, EDI;
+	short ES, [2], CS, [2], SS, [2];
+	short DS, [2], FS, [2], GS, [2];
+	short LDTR, [2], TaskFlags, IOBitMap;
+	// 합계 104bytes
+};
+
+struct TAPI_LlvPrm { // 32bytes
+	int run[12];
+	int Glv;
+	int short_run[12]; // 0x10~0x1b 0x1b가 ―1이라면 invalid
+	int Ilv;
+};
+
+
+struct TAPI_TSS {
+	TAPI_TSS386 tss386;  // TL-0 블록(104bytes)
+
+	// system-signal 처리의 블록(24bytes)
+	int sysbox_write_free, sysbox_write_ptr, sysbox_write_ptr0, sysbox_write_ptr1;
+	int sysbox_read_ptr;
+	unsigned char msgbox_status, softint_nest, [2];
+		// bit0 : buffer write overrun
+		// bit6 : sysbox empty(0:empty)
+		// bit7 : msgbox empty(0:empty)
+
+	int set[12], tr[4], run[12], ldt_img; // TL-1 블록(48bytes)
+	int fpu_reg_img, sse_reg_img /* for SSE & SSE2 */;
+//	TAPI_TSS near *back, near *next;
+	int back, next;
+
+	int softint_EIP /* +0x00b0 */; short softint_CS; // signal 처리의 블록(48bytes)
+	short softint_oldCS;
+	int softint_oldEIP;
+	unsigned char softint_Llv, sysint_Llv /* 이 필드는 사용하지 않는다. softint와 공통 */, now_Llv, softint_oldLlv;
+	int msgbox_write_free, msgbox_write_ptr, msgbox_write_ptr0, msgbox_write_ptr1;
+	int msgbox_eom_code, msgbox_rewind_code, [8];
+
+//	softint_oldLlv는, 스택에 넣으면 0xff로 변화한다...그리고 0xff시 스토어 된다.
+//	softint_CS == 0 때, CS:EIP의 변화 없음
+//	softint_Llv == 0 때, Llv의 변화 없음
+
+// TL-2 블록 32bytes
+//	GlvPrm near *Glv /* +0x00e0 */; // TapiWorkSel안의 오프셋(offset)
+//	LlvPrm near *Llv; // TapiWorkSel안의 오프셋(offset)
+	int Glv, Llv; // 0 xe0~0xe7
+	int Ilv, Llv_base; // Inner-level
+	int short_run[12]; // +0x00f0
+	char flags, [3];  // Set의 재평가 요구 플래그
+
+
+// 이 태스크의 전 실행 시간은 run이 아니다. run은 현재의 Llv의 running 타임을 나타내고 있는 것에 지나지 않는다.
+// 현재의 Llv의 LlvPrm.run는 무효.
+
+};
+
+
+struct TAPI_WORK {
+	int TskStart[12];              // (TL-1) 태스크가 스타트 했을 때 시각
+	/* TAPI_TSS near * */ int TskPointer;   // (TL-1) 현재 주행중의 태스크 포인터
+
+	int GlvStart[12];              // (TL-2) 현재의 Glv가 스타트 했을 때 시각
+	// TAPI_GlvPrm near *GlvNow;    // (TL-2) 현재 주행중의 Glv
+	int GlvNow;
+//	int TskTimerMin[12];
+	char TskTimerMode; // == 0 : 1 태스크에서 독점. 타이머 미사용.
+	void [3];
+	int taskFPU, [8]; /* taskFPU는 0x0024 */
+
+//	void (far *TimerSysCmd)(); 함수에의 포인터(far)
+	int TimerSysCmd[8]; // +0x30
+//	int *TimerNodeTimePtr; // 타이머 필드의 farptr
+	int TimerNodeTimePtr[8];  // +0x38
+	int TimerCommand_Regist; // == 04 * 4; +0x40
+	int TimerNode1;
+	int TimerCommand_EOC1;
+	int TimerCommand_Cancel; // == 05 * 4; +0x4c
+	int TimerNode2;
+	int TimerCommand_EOC2;
+	int TimerCommand_GetTime; // == 06 * 4; +0x58
+	int NowTimeCT[12]; // +0x5c
+	int TimerCommand_EOC3; // == 00 * 4;	// 이상 (TL-2)
+
+	// 글로벌 레벨은, 0x100~0x800. 1개당 0x40 바이트(합계 28 레벨)
+	// 우선 사용하는 것은 3개. 0x200, 0x400, 0x7c0(sleep)
+
+
+};
+
+struct TAPI_GlvPrm { // 계 64bytes
+	int run[12];
+//	struct Tss near *Pointer;
+	int pointer;
+	int totalIlv; // +0x10
+	int tasks;
+	// bit0:Ilv 변경 플래그(0으로 변경 있음), bit1:시분할 억제 플래그(1로 억제).
+	int MinIlv, MaxIlv;
+	char flags; // 플래그에 따라서는 Ilv를 고려하지 않는다.
+	void [31];
+};
+
+void near TapiFixOn();
+void near TapiFixTsk();
+void near TapiChgLlv();
+void near TapiRemoveTsk();
+void near TapiAddTsk();
+void near TapiChangeTsk();
+
+void near TAPI_Init();
+void near TAPI_init_tssinit();
+void near TAPI_AddNestSleep();
+void near TAPI_SignalMessage();
+void near TAPI_SignalMessage2();
+void near TAPI_Softint1Ret();
+
+void far TAPI_syscmd()
+// TAPI 커맨드 접수
+// 이것은 반드시 lv0로부터 call된다
+{
+	unsigned int Init_sel     ==  2 * 8, TAPI_sel   == 12 * 8;
+	int *cmd == FS:EBX;
+
+	// 덧붙여 send_message에의 포인터는 이 커맨드로 질문해 주면 가르칩니다.
+
+	PUSHAD();
+	MOV(EAX, CS);
+	PUSH(DS);
+	EAX += 8;
+	DS = AX;
+nextcmd:
+	EAX = *cmd;
+	if (EAX == 0)
+		goto cmd00;
+	if (EAX == 0x0114)
+		goto cmd0114; // 커맨드 시그널
+	if (EAX == 0x0118)
+		goto cmd0118; // 커맨드 시그널 간접
+	if (EAX == 0x0128)
+		goto cmd0128; // 커맨드 시그널 2(with wait)
+	if (EAX == 0x012c)
+		goto cmd012c; // 커맨드 시그널 2(with wait) 간접
+	if (EAX == 0x010c)
+		goto cmd010c; // AddNestSleep
+	if (EAX == 0x0124)
+		goto cmd0124; // TAPI_Softint1Ret
+	if (EAX == 0x0100)
+		goto cmd100; // Llv 변경
+	if (EAX == 0x0104)
+		goto cmd104; // 태스크 등록
+	if (EAX == 0x0110)
+		goto cmd0110; // DestoryTask
+	if (EAX == 0x011c)
+		goto cmd011c; // 시그널 처리 루틴 통지
+	if (EAX == 0x0108)
+		goto cmd0108; // TAPI의 초기화
+	if (EAX == 0x0120)
+		goto cmd0120; // int07용의 루틴
+	if (EAX == 0x0130)
+		goto cmd0130;
+	if (EAX == 0x0018)
+		goto cmd0018; // 버전 요구
+
+	INT(0x03);
+
+cmd00:
+	POP(DS);
+	[SS:ESP + 16] = EBX;
+	POPAD();
+	return;
+
+cmd100:
+	/* 지정한 태스크의 로컬 레벨을 변경 */
+	TAPI_TSS *cmd100_tss == DS:ESI;
+	(offset) cmd100_tss = cmd[4];
+	EAX = cmd[8];
+	PUSHFD();
+	if (AL ! = cmd100_tss->now_Llv) {
+		EDI = EAX;
+		CLI();
+		PUSH((offset) cmd);
+		TapiChgLlv();
+		TapiFixTsk();
+		POP((offset) cmd);
+	}
+	(offset) cmd += 12;
+	POPFD();
+	goto nextcmd;
+
+cmd104:
+	// 지정한 태스크를 등록해, 로컬 레벨을 세트
+	TAPI_TSS *cmd104_tss == DS:ESI;
+	(offset) cmd104_tss = cmd[4];
+	EDI = cmd[8];
+	PUSHFD();
+	CLI();
+	PUSH((offset) cmd);
+	PUSH(EDI);
+
+	/* for DEBUG */
+//	TEST(ESI, 0xfff);
+//	if (! = 0)
+//		INT(0x03);
+
+	TapiAddTsk();
+	POP(EAX);
+	EDI = EAX;
+	if (AL ! = cmd104_tss->now_Llv) {
+		TapiChgLlv();
+		TapiFixTsk();
+	}
+	POP((offset) cmd);
+	POPFD();
+	(offset) cmd += 12;
+	goto nextcmd;
+
+cmd0108:
+	/* TAPI의 초기화 */
+	PUSH((offset) cmd);
+	TAPI_Init();
+	POP((offset) cmd);
+	(offset) cmd += 4;
+	goto nextcmd;
+
+cmd010c:
+	// AddNestSleep
+	PUSH((offset) cmd);
+	AL = cmd[ 4];
+	ECX = cmd[ 8];
+	DL = cmd[ 5];
+	TAPI_AddNestSleep();
+	POP((offset) cmd);
+	(offset) cmd += 12;
+	goto nextcmd;
+
+cmd0110:
+	// TAPI_DestoryTask
+	PUSHFD();
+	PUSH((offset) cmd);
+	ESI = cmd[4];
+	CLI();
+	TapiRemoveTsk();
+	TapiFixTsk();
+	POP((offset) cmd);
+	POPFD();
+	(offset) cmd += 8;
+	goto nextcmd;
+
+cmd0114:
+	// 커맨드 시그널
+	MOV(EAX, FS);
+	PUSH(ES);
+	ES = AX;
+	LEA(EBP, [(offset) cmd + 4]);
+	TAPI_SignalMessage();
+	POP(ES);
+	(offset) cmd = EBP;
+	goto nextcmd;
+
+cmd0118:
+	// 커맨드 시그널 간접
+	PUSH(ES);
+	PUSH((offset) cmd);
+//	LES(EBP, cmd[4]);
+	asmout("LES EBP, DWORD PTR FS:[EBX+4]");
+	TAPI_SignalMessage();
+	POP((offset) cmd);
+	POP(ES);
+	(offset) cmd += 12;
+	goto nextcmd;
+
+cmd011c:
+	// 시그널 처리 루틴 통지
+	asmout("MOV DWORD PTR FS:[EBX+4], OFFSET TAPI_SignalMessageTimer");
+	cmd[8] = TAPI_sel;
+	(offset) cmd += 12;
+	goto nextcmd;
+
+cmd0120:
+	// int07 처리 루틴 통지
+	asmout("MOV DWORD PTR FS:[EBX+4], OFFSET TAPI_INT07");
+	cmd[8] = TAPI_sel;
+	(offset) cmd += 12;
+	goto nextcmd;
+
+cmd0124:
+	// TAPI_Softint1Ret
+	ECX = cmd[4];
+	EAX = cmd[8];
+	TAPI_Softint1Ret();
+	(offset) cmd += 12;
+	goto nextcmd;
+
+cmd0018:
+	//버젼 정보
+	cmd[ 8] = 100;
+	cmd[12] = 0;
+	cmd[16] = 0;
+	cmd[20] = 0;
+	(offset) cmd += 24;
+	goto nextcmd;
+
+cmd0128:
+	// 커맨드 시그널(with wait)
+	MOV(EAX, FS);
+	PUSH(ES);
+	ES = AX;
+	LEA(EBP, [(offset) cmd + 4]);
+	TAPI_SignalMessage2();
+	POP(ES);
+	(offset) cmd = EBP;
+	goto nextcmd;
+
+cmd012c:
+	// 커맨드 시그널(with wait) 간접
+	PUSH(ES);
+	PUSH((offset) cmd);
+//	LES(EBP, cmd[4]);
+	asmout("LES EBP, DWORD PTR FS:[EBX+4]");
+	TAPI_SignalMessage2();
+	POP((offset) cmd);
+	POP(ES);
+	(offset) cmd += 12;
+	goto nextcmd;
+
+cmd0130:
+	PUSH((offset) cmd);
+	PUSHFD();
+	CLI();
+	asmout("INC BYTE PTR SS:[0FFFFFFF0H]");
+	TapiChangeTsk();
+	TapiFixTsk();
+	(char) [SS:0xfffffff0]--;
+	/* 여기는 반드시 0. 그렇지 않으면 TapiChangeTsk는 call하지 말 것 */
+	asmout("CALL FAR DWORD PTR SS:[0FFFFFFF8H]"); /* DS 및 reg32를 파괴 */
+	POPFD();
+	POP((offset) cmd);
+	(offset) cmd += 8;
+	goto nextcmd;
+}
+
+void near TAPI_Init()
+{
+	unsigned int Init_sel     ==  2 * 8, TAPI_sel   == 12 * 8;
+	unsigned int timerint_sel == 10 * 8, timerdata_sel == 11 * 8;
+	unsigned int tss386_0_sel == 14 * 8;
+	unsigned int tss386_1_sel == 16 * 8, stack1_sel == 17 * 8;
+	unsigned int tss386_2_sel == 18 * 8, stack2_sel == 19 * 8;
+	unsigned int tss386_3_sel == 20 * 8, stack3_sel == 21 * 8;
+	unsigned int tss386_4_sel == 24 * 8, stack4_sel == 25 * 8;
+	unsigned int tss386_5_sel == 26 * 8, stack5_sel == 27 * 8;
+
+	TAPI_TSS *tss0 == DS:0x0400, *tss1 == DS:0x0800, *tss2 == DS:0x0c00, *tss3 == DS:0x1000;
+	TAPI_TSS *tss4 == DS:0x1400, *tss5 == DS:0x1800;
+	TAPI_WORK *work == DS:0;
+	TAPI_GlvPrm *glevel0 == DS:0x100, *glevel1 == DS:0x200, *glevel_sleep == DS:0x7c0;
+
+	asmout("#work_TimerSysCmd EQU 030H");
+	asmout("#work_NowTimeCT EQU 05CH");
+//	asmout("#TS_short_run EQU 0F0H");
+
+//	PUSH(DS);
+	MOV(EAX, DS);
+
+	// 현재 시각, 노드를 취득
+
+	EDI = 0;
+
+	work->taskFPU = EDI;
+
+	PUSH(FS);
+	FS = AX;
+	asmout("MOV DWORD PTR DS:[#work_TimerSysCmd+0], 0 ; OFFSET TimerSysCmd");
+	asmout("MOV DWORD PTR DS:[#work_TimerSysCmd+4],10*8");
+
+	work->TimerNode2 = 2 * 4 /* GetNode */;
+	work->TimerCommand_GetTime = 6 * 4 /* SetNowTime */;
+	work->TimerCommand_EOC3 = EDI;
+//	/* EBX = &(work->TimerNode2) */ EBX = 0x0050;
+	LEA(EBX, work->TimerNode2);
+	asmout("CALL FAR DWORD PTR DS:[#work_TimerSysCmd]");
+	ESI = work->TimerCommand_EOC2;
+	work->TimerCommand_Regist = 4 * 4 /* SetTimer */;
+	work->TimerNode1 = ESI;
+	work->TimerCommand_EOC1 = EDI;
+	work->TimerCommand_Cancel = 5 * 4 /* CancelTimer */;
+	work->TimerNode2 = ESI;
+	work->TimerCommand_EOC2 = EDI;
+	ESI += 40; // 이것은 조금 간사하다
+	asmout("MOV DWORD PTR DS:[38H], ESI");
+	asmout("MOV DWORD PTR DS:[3CH],11*8");
+	EAX = work->NowTimeCT[0];
+	ECX = work->NowTimeCT[4];
+	EDX = work->NowTimeCT[8];
+	work->TskStart[0] = EAX;
+	work->TskStart[4] = ECX;
+	work->TskStart[8] = EDX;
+	work->GlvStart[0] = EAX;
+	work->GlvStart[4] = ECX;
+	work->GlvStart[8] = EDX;
+	work->NowTimeCT[8] = EDI;
+
+	asmout("MOV FS, WORD PTR DS:[03CH]"); // TimerNodeTimePtr[4];
+	asmout("MOV DWORD PTR FS:[ESI-40+32+0], OFFSET TAPI_TskChgTimer");
+	asmout("MOV DWORD PTR FS:[ESI-40+32+4],12*8");
+
+	POP(FS);
+
+	TAPI_GlvPrm *glv == DS:ESI;
+
+	(offset) glv = 0x0100;
+//	EAX = 0;
+	ECX = 0x0800 / sizeof (TAPI_GlvPrm);
+	do {
+		glv->run[0] = EDI;
+		glv->run[4] = EDI;
+		glv->run[8] = EDI;
+		glv->tasks = EDI;
+		glv->totalIlv = EDI;
+		glv->flags = 3; // inner 무효
+		ESI += sizeof (TAPI_GlvPrm);
+		ECX--;
+	} while (! = 0);
+
+//	work->TskPointer = EDI;
+//	work->GlvNow = EDI;
+	work->TskTimerMode = 0;
+
+//	glevel_sleep->run[0] = EDI;
+//	glevel_sleep->run[4] = EDI;
+//	glevel_sleep->run[8] = EDI;
+//	glevel_sleep->tasks = EDI;
+//	glevel_sleep->flags = 0x03; // inner 무효
+//	glevel_sleep->pointer = EDI;
+
+	// 스택 초기화
+//	EAX = 0xff80;
+//	/* (int) */ [SS:0xffffffe0] = EAX;
+//	/* (int) */ [SS:0xfffffff0] = EAX;
+	MOV(EAX, CS);
+	asmout("MOV DWORD PTR SS:[0FFFFFFE8H], OFFSET TAPI_SysCntZero");
+	(int) [SS:0xffffffec] = EAX;
+	asmout("MOV DWORD PTR SS:[0FFFFFFF8H], OFFSET TAPI_TskChgTimer2");
+	(int) [SS:0xfffffffc] = EAX;
+
+//	POP(DS);
+	return;
+}
+
+// ----------------------------------------------------------------- TAPI Layer-1
+//   제1층：다만 체인을 더듬어 지정 간격으로 태스크를 회전할 뿐
+
+void far TAPI_TskChgTimer()    /* far-call로 불린다 */
+/* 이 루틴은 TimerDriver로부터 불린다 */
+{
+	TAPI_WORK *work == DS:0;
+	TAPI_TSS *NowTss == DS:EBX, *next == DS:EDI;
+
+	asmout("#work_NowTimeCT EQU 05CH");
+
+	MOV(EAX, CS);
+	PUSH(DS);
+	EAX += 8; DS = AX; /* DS세트 */
+
+	// 타임 아웃 bit를 조사한다. 만약, 이미 타임 아웃 하고 있으면 중복이다.
+	// 이렇게 되면 빠질 수 없기 때문에, 타이머를 캔슬해 Fix를 요구한다.
+	// 강제적으로 TimeOut처리를 하지 않는 것은, 태스크 체인지 억제 모드에 배려하고 있기 때문이다.
+//	asmout("TEST BYTE PTR SS:[0FFFFFFF1H], 01H");
+	TEST((char) [SS:0xfffffff1], 0x01);
+	(offset) NowTss  = work->TskPointer;
+	if (== 0)
+		goto dead_lock;
+
+	(offset) next = NowTss->next;
+	// Lv0Stack->IntCountFlags &= ~(On | TimeOut); // 지정 비트를 0으로 한다
+	(int) [SS:0xfffffff0] &= 0xfffffe7f;
+	EAX = next->set[0];
+	ECX = next->set[4];
+	EDX = next->set[8];
+	if ((unsigned) (char) next->short_run[11] == 0xff) {
+		POP(DS);
+		/* CF = 1 */ STC();    /* 연속 기동 모드 */
+	//	asmout("CMP ESP,-1"); // ESP는 ―1보다 작기 때문에 CF = 1이 된다.
+		return;
+	} else {
+		EAX -= next->short_run[0];
+		SBB(ECX, next->short_run[4]);
+		SBB(EDX, next->short_run[8]);
+		// 이것이 너무 작으면 또 곧바로 인터럽트하게 된다.
+		// 어떻게 하면, 중복을 피할 수 있을까?
+		POP(DS);
+		/* CF = 1 */ STC();    /* 연속 기동 모드 */
+	//	asmout("CMP ESP,-1"); // ESP는 ―1보다 작기 때문에 CF = 1이 된다.
+		return;
+	}
+
+dead_lock:
+	// short_run[11] == 0 xff인가를 조사해서 따로 따로 통계내야할지도 모른다
+//	NowTss->dead_lock_count++;
+
+	work->TskTimerMode = 0;
+	TapiFixOn(); /* EAX~EBX를 파괴 */
+	POP(DS); // tapiwork_sel
+	/* CF = 0 */ CLC();    /* 단발 기동 모드 */
+	return;
+
+	// 시분할 변환을 위한 타이머를 세트 할 때는,
+	// work->TskPointer와 그래서 나타나는 태스크 tss의 next 필드,
+	// tss->next안의 set 피드를 유효하게 해 둘 필요가 있다.
+	// tss->next의 short_run도 갱신해 두는 것.
+	// tss->next의 short_run가 유효하면, set와 short_run의 대소 관계를 체크하지 않고,
+	// short_run < set를 가정하므로 주의.
+}
+
+void far TAPI_TskChgTimer2()    /* 이것은 far-call로 들어 온다 */
+/*	DS 및 전 범용 레지스터 파괴
+	IF == 0인 것 */
+{
+	TAPI_WORK *work == DS:0;
+	TAPI_TSS *now == DS:EBX, *next == DS:ESI;
+
+//	asmout("#TS_short_run EQU 0F0H");
+
+	(char) [SS:0xfffffff0] |= 0x80;
+	MOV(EAX, CS); EAX += 8; DS = AX; /* DS세트 */
+
+	// Fix 체크
+//	asmout("TEST BYTE PTR SS:[0FFFFFFF1H], 02H");
+	TEST((char) [SS:0xfffffff1], 0x02);
+	if (== 0) {
+		asmout("CALL TAPI_FixMain"); // (near) call(FixMain);
+	}
+
+	// timeout 체크
+//	asmout("TEST BYTE PTR SS:[0FFFFFFF1H], 01H");
+	TEST((char) [SS:0xfffffff1], 0x01);
+	if (== 0) {
+		(offset) now = work->TskPointer;
+	//	Lv0Stack->IntCountFlags |= (On | TimeOut | Fix); // 지정 비트를 1로 한다
+	//	EAX = now->set[0];
+	//	ECX = now->set[4];		now->run[0] += EAX;     /* 주행 시간을 갱신 */
+	//	EDX = now->set[8];		now->run[4] += ECX + CF;
+	//	(offset) next = now->next;	now->run[8] += EDX + CF;
+	//	work->TskStart[0] += EAX;     /* 주행 개시시각을 갱신 */
+	//	work->TskPointer = next;
+	//	work->TskStart[4] += ECX + CF;
+	//	work->TskStart[8] += EDX + CF;
+		(int) [SS:0xfffffff0] |= 0x0380;
+		EAX = now->set[0];
+		ECX = now->set[4];
+		CMP((char) now->short_run[11], 0xff);
+	//	DL = 0xff; CMP((char) now->short_run[11], DL);
+		EDX = now->set[8];
+		/* (false) */ if (! =) {
+			EAX -= now->short_run[0];
+			SBB(ECX, now->short_run[4]);
+			SBB(EDX, now->short_run[8]);
+			(char) now->short_run[11] = 0xff;
+		}
+		now->run[0] += EAX;
+		ADC(now->run[4], ECX);		(offset) next = now->next;
+		ADC(now->run[8], EDX);
+		work->TskStart[0] += EAX;	work->TskPointer = (offset) next;
+		ADC(work->TskStart[4], ECX);
+		ADC(work->TskStart[8], EDX);
+		// goto *((void far *()) next->Tr[-4]);   /* 태스크 변환 */
+		asmout("JMP FAR DWORD PTR DS:[ESI+128+8]");
+	}
+
+// ----------------------------------------------------------------- TAPI Layer-2
+/*
+	asmout("TEST BYTE PTR SS:[0FFFFFFF1H], 04H");
+	if (== 0) {
+		TAPI_TSS *tss == DS:ESI;
+		(offset) tss = work->TskPointer;
+	//	여기서, 레벨 0의 대기 인터럽트를 호출한다
+	//	Lv0Stack->IntCountFlags |= SoftInt0; // 지정 비트를 1로 한다
+		STI();
+		POP(EAX);
+		(char) [SS:0xfffffff1] |= 0x04;
+		POP(ECX);
+		PUSHFD();
+		ESP -= 44;
+		[SS:ESP] = DS;
+		asmout("JMP TAPI_softint0_2");
+	}
+*/
+	return;
+}
+
+void far TAPI_SysCntZero()
+// 이 루틴을 부르려면 요령이 있다. ZF = 1의 경우, IRETD. ZF = 0의 경우, FRET.
+// CMP(EAX, EAX); 나 TEST(ESP, ESP); // lv0에서는, ESP는 0이 되지 않는다.
+// ZF == 0의 경우, 스택 탑은 EFLAGS.
+// 게다가 점프로 부른다. CLI 상태로 해 두는 것.
+// 이 버젼에서는, 시스템 code segment인지를 lv0인가 어떤가로 판정한다
+// 장래는, 호출용의 코드와 돌아오는 레벨이 다르면, 시스템내라고 판단한다.
+{
+	TAPI_WORK *work == DS:0;
+	TAPI_TSS *tss == DS:ESI;
+	PUSHAD();
+
+//	PUSH(EDX); // 디버그용
+//	PUSH(EBX);
+//	PUSH(ESP);
+//	PUSH(EBP);
+//	PUSH(ESI);
+//	PUSH(EDI);
+//	EBX = (int) [SS:ESP + 24]; // EIP
+//	EDI = (int) [SS:ESP + 28]; // CS
+//	(int) [SS:ESP + 24] = ECX;
+//	(int) [SS:ESP + 28] = EAX;
+
+	if (ZF == 0) {
+		EDX = (int) [SS:ESP + 32 /* EFLAGS */];
+		EAX = (int) [SS:ESP + 36 /* EIP */];
+		ECX = (int) [SS:ESP + 40 /* CS */];
+		(int) [SS:ESP + 32] = EAX;
+		(int) [SS:ESP + 36] = ECX;
+		(int) [SS:ESP + 40] = EDX;
+	}
+//	CLI(); // 여기서 플래그가 바뀌면 까다로우니까
+	MOV(EAX, CS);
+	PUSH(DS);
+	EAX += 8;
+	TEST((char) [SS:ESP + 40 /* CS */], 0x03);
+//	asmout("TEST BYTE PTR SS:[ESP+40], 03H");
+	DS = AX;
+	(offset) tss = work->TskPointer;
+	if (== 0) {
+		// 아직 시스템안에 있고, 단지 인크리먼트(increment)가 늦었다고 판정
+		POP(DS);
+		POPAD();
+		IRETD();
+	}
+
+	TEST((char) [SS:0xffffffe1], 0x01);
+//	asmout("TEST BYTE PTR SS:[0FFFFFFE1H], 01H"); // 인터럽트 발생 요구
+	if (== 0) {
+		TEST((char) [SS:0xffffffe1], 0x02);
+	//	asmout("TEST BYTE PTR SS:[0FFFFFFE1H], 02H"); // soft-iret 요구
+		// 되돌아갈 생각이었는데, 재차 인터럽트되었다.
+		// 그러한 경우는, lv1의 스택을 건드리지 않는다.
+		EDI = (int) tss->softint_CS;
+		EBP = tss->softint_EIP;
+		if (! = 0) {
+			EDX = tss->softint_oldLlv;
+			LDS(EBX, [SS:ESP + 48 /* old-SS:ESP */]);
+		//	if (DL == 0xff) { // 있을 수 없다
+		//		INT(0x03);
+			//	EDX = tss->Llv;
+			//	EDX -= tss->Llv_base;
+			//	EDX /= 32;
+		//	}
+			EBX -= 48;
+			// 스택이 부족하게 되었는지는 예외 처리에 맡긴다
+			EAX = (int) [SS:ESP +  4 /* EDI */];
+			ECX = (int) [SS:ESP +  8 /* ESI */];
+			(short) [DS:EBX     ] = FS;
+			(int) [DS:EBX +  4] = EAX;
+			(int) [DS:EBX +  8] = ECX;
+			(int) [DS:EBX + 16] = EDX;
+			EAX = (int) [SS:ESP + 12 /* EBP */];
+			ECX = (int) [SS:ESP + 20 /* EBX */];
+			EDX = (int) [SS:ESP + 24 /* EDX */];
+			(int) [DS:EBX + 12] = EAX;
+			(int) [DS:EBX + 20] = ECX;
+			(int) [DS:EBX + 24] = EDX;
+			EAX = (int) [SS:ESP + 28 /* ECX */];
+			ECX = (int) [SS:ESP + 32 /* EAX */];
+			EDX = (int) [SS:ESP + 36 /* EIP */];
+			(int) [DS:EBX + 28] = EAX;
+			(int) [DS:EBX + 32] = ECX;
+			(int) [DS:EBX + 36] = EDX;
+			EAX = (int) [SS:ESP + 40 /* CS */ ];
+			ECX = (int) [SS:ESP + 44 /* EFLAGS */];
+			(int) [DS:EBX + 40] = EAX;
+			(int) [DS:EBX + 44] = ECX;
+reentry:
+			(int) [SS:ESP + 48 /* ESP */] = EBX;
+		}
+		(int) [SS:0xffffffe0] |= 0x00000380;
+		// 분기처와 분기원의 레벨은 같은가?
+		EAX = EDI;
+		CL = (char) [SS:ESP + 40 /* CS */];
+		AL &= 0x03;
+		CL &= 0x03;
+		if (AL ! = CL)
+			goto error; // 미지원(레벨이 다른 것은 아직 서포트하고 있지 않다)
+		(int) [SS:ESP + 36] = EBP;
+		(int) [SS:ESP + 40] = EDI;
+		POP(DS);
+		POPAD();
+		IRETD();
+	} else {
+		// 되돌아간다
+		DL = tss->now_Llv;
+	//	EBP = tss->Llv;
+	//	EDI = tss->Llv_base;
+		LDS(EBX, [SS:ESP + 48 /* old-SS:ESP */]);
+		FS = (short) [DS:EBX     ];
+		EAX = (int) [DS:EBX +  4];
+		EBP = (int) [DS:EBX +  8];
+		EDI = (int) [DS:EBX + 12];
+		(int) [SS:ESP +  4 /* EDI */] = EAX;
+		(int) [SS:ESP +  8 /* ESI */] = EBP;
+		(int) [SS:ESP + 12 /* EBP */] = EDI;
+		EAX = (int) [DS:EBX + 20];
+		EBP = (int) [DS:EBX + 24];
+		EDI = (int) [DS:EBX + 28];
+		(int) [SS:ESP + 20 /* EBX */] = EAX;
+		(int) [SS:ESP + 24 /* EDX */] = EBP;
+		(int) [SS:ESP + 28 /* ECX */] = EDI;
+		EAX = (int) [DS:EBX + 32];
+		EBP = (int) [DS:EBX + 36];
+		EDI = (int) [DS:EBX + 40];
+		(int) [SS:ESP + 32 /* EAX */] = EAX;
+		(int) [SS:ESP + 36 /* EIP */] = EBP;
+		(int) [SS:ESP + 40 /* CS */ ] = EDI;
+		EAX = (int) [DS:EBX + 44];
+		CL = (int) [DS:EBX + 16];
+		EBX += 48;
+		(int) [SS:ESP + 44 /* EFLAGS */] = EAX;
+		(int) [SS:ESP + 48 /* ESP */] = EBX;
+		(char) [SS:0xffffffe0] = 0x80;
+		if (CL ! = DL /* Llv 변화 */) {
+			if (CL ! = 0xff) {
+				MOVZX(EDI, CL);
+				MOV(EAX, CS);
+				// 또 일어날지도 모르기 때문에 시스템안에 있는 것을 나타내 둔다
+				(char) [SS:0xffffffe0] = 0x81;
+				EAX += 8;
+				DS = AX;
+				TapiChgLlv();
+				TapiFixTsk();
+				// 여기서 또 일어나 있을지도 모르기 때문에 체크.
+				(char) [SS:0xffffffe0]--;
+				if (== 0) {
+					// 인터럽트 루틴의 lv(특권 레벨)를
+					// 외부로부터 변경되면, 이하의 방법은 트러블의 원인이 된다.
+					// 게다가, 반드시 내부로부터 변경하도록 규제해도 문제는 되지 않는다.
+
+					// 레지스터 이미지는, 남아 있으므로 변화한 부분만큼을 수정
+					EDX = tss->softint_oldLlv;
+					EDI = (int) tss->softint_CS;
+					EBP = tss->softint_EIP;
+				//	if (DL == 0xff) {  // 있을 수 없다
+				//		INT(0x03);
+					//	EDX = tss->Llv;
+					//	EDX -= tss->Llv_base;
+					//	EDX /= 32;
+				//	}
+					LDS(EBX, [SS:ESP + 48 /* old-SS:ESP */]);
+					(int) [DS:EBX + 16 - 48] = EDX;
+					EBX -= 48;
+					goto reentry;
+				}
+			}
+		}
+		(char) [SS:0xffffffe1] |= 0x02;
+		// 특권 레벨의 불일치는 없는가?
+		AL = (char) [SS:ESP + 40 /* CS */];
+		CL = (char) [SS:ESP + 52 /* SS */];
+		AL &= 0x03;
+		CL &= 0x03;
+		if (AL ! = CL)
+			goto error; // 미지원(레벨이 다른 것은 아직 서포트하고 있지 않다)
+		POP(DS);
+		POPAD();
+		IRETD();
+	}
+error:
+	INT(0x03);
+}
+
+void far TAPI_SoftInt1_lv0()
+{
+	TAPI_WORK *work == DS:0;
+	TAPI_TSS *tss == DS:ESI;
+	STI();
+	PUSHFD();
+	ESP -= 8;
+	PUSHAD();
+	MOV(EAX, CS);
+	PUSH(DS);
+	EAX += 8;
+	DS = AX;
+	(offset) tss = work->TskPointer;
+	EAX = tss->softint_oldEIP;
+	ECX = tss->softint_oldCS;
+	(int) [SS:ESP + 36] = EAX;
+	(int) [SS:ESP + 40] = ECX;
+	AL = tss->msgbox_status;
+	POP(DS);
+	TEST(AL, 0x80);
+	if (! = 0) {
+		(int) [SS:0xffffffe0] &= 0xfffffe7f;
+	}
+	TEST(AL, 0x40);
+	if (! = 0) {
+	//	(int) [SS:0xffffffe0] &= 0xfffffe7f; // ???
+	}
+	POPAD();
+	IRETD();
+}
+
+
+//	DS:ESI로부터의 사양(타이머 전용 시그널 처리 루틴 사용시).
+//	+00 : bit0-2 : 메세지 dw수. 최고 7(28bytes).
+//	      bit3   : eax, ecx, edx 로드 & CF = 1로 할까 (1로 한다).
+//	      bit7   : 시그널을 일으킬지 어떨지.
+//	      bit8-  : 메세지의 송신지의 지정에 사용한다(시그널 포토).
+//	+04 -	     : 메세지를 쓴다
+
+// new
+// mode 2이외는 살아 있지 않을 가능성이 있다
+
+void near TAPI_SignalMessage()
+//	범용 시그널 처리 루틴
+//	이 버젼에서는, 메세지
+//	oldLlv에 대입한다
+//  ES:EBP로부터 메세지. EBP를 건드린다.
+{
+	TAPI_WORK *work == DS:0;
+
+	PUSHFD();
+	CLI();
+
+//	asmout("INC BYTE PTR SS:[0FFFFFFE0H]"); // 이것은 불필요. near이니까
+//	asmout("INC BYTE PTR SS:[0FFFFFFF0H]");
+	(char) [SS:0xfffffff0]++;
+
+	TAPI_TSS *tss == DS:ESI;
+
+	EAX = [ES:EBP];
+	TEST(EAX, 0x40000000);
+	if (! = 0)
+		goto sysmsg;
+	EAX &= 0x3ffffff0;
+	(offset) tss = [DS:EAX];
+	// 추가 메세지의 처리
+
+//	reg32 = (offset) tss; // 랩핑을 위해서 값을 보존...sysmsg에는 랩핑은 없다
+//		sysmsg에서는 랩핑같은 건 없어도 벡터를 완전하게 컨트롤 할 수 있으므로 문제 없다
+	(offset) tss &= 0x7fffff00;
+
+	if (tss->softint_nest == 0) {
+		tss->softint_nest = 0xff; // 끼어들어지면 부의 값이 된다.
+		if ((unsigned) (offset) tss == work->TskPointer) {
+			// system_count(lv0_count)의 플래그를 세운다
+			(int) [SS:0xffffffe0] &= 0xfffffe7f;
+		} else {
+			// 타인의 경우：
+			//	만약, SS의 lv가 0이라면, TAPI_SoftInt0_lv0에 CS:EIP를 고쳐 쓴다
+			//	그렇지 않으면, TAPI_SoftInt0_lv1에 CS:EIP를 고쳐 쓴다...있을 수 없다
+			EAX = tss->tss386.EIP;
+			ECX = (int) tss->tss386.CS;
+			tss->softint_oldEIP = EAX;
+			tss->softint_oldCS  = ECX;
+			tss->tss386.CS = CS /* TAPI CS */;
+			asmout("MOV ECX, OFFSET TAPI_SoftInt1_lv0");
+			tss->tss386.EIP = ECX;
+		}
+	}
+
+	ECX = [ES:EBP];
+	EBP += 4;
+	ECX &= 0x0f; // 반드시 0은 아니다.
+	EDX = tss->msgbox_write_ptr;
+
+	// 메세지 랩핑 처리는 여기에 쓴다(reg32의 플래그를 참조)
+
+//	asmout("LEA EAX,[EDX+ECX*4]");
+	LEA(EAX, [EDX + ECX * 4]);
+	if ((unsigned) EAX >= tss->msgbox_write_ptr1 /* write 상한 주소(rewind를 위해서 4 빼기) */) {
+		// 선두에 되돌린다
+		// 버리는 dw수를 계산
+		EAX = tss->msgbox_write_ptr1;
+		EAX -= EDX;
+		EAX /= 4; // EAX == 선두에 되돌리는 것에 의해 소비하는 사이즈(dw단위)
+		tss->msgbox_write_free -= EAX;
+		if ((unsigned) < 0) {
+			tss->msgbox_write_free += EAX;
+			tss->msgbox_status |= 0x01 /* buffer overrun */;
+			goto skip_msgwrite2;
+		} else {
+			[DS:EDX + 4] = EAX;
+			EAX = tss->msgbox_rewind_code;
+			[DS:EDX] = EAX;
+			EDX = tss->msgbox_write_ptr0;
+		}
+	}
+
+	tss->msgbox_write_free -= ECX;
+	if ((unsigned) < 0) {
+		tss->msgbox_write_free += ECX;
+		tss->msgbox_status |= 0x01 /* buffer overrun */;
+		LEA(EBP, [SS:EBP + ECX * 4]);
+		goto skip_msgwrite;
+	}
+
+	do {
+		EAX = [ES:EBP];
+		EBP += 4;
+		[DS:EDX] = EAX;
+		EDX += 4;
+		ECX--;
+	} while (! = 0);
+skip_msgwrite:
+	tss->msgbox_write_ptr = EDX;
+	EAX = tss->msgbox_eom_code;
+	(int) [DS:EDX] = EAX;
+skip_msgwrite2:
+
+	// msgbox 풀등의 처리도 랩핑 취급
+
+	AL = tss->msgbox_status;
+	AL += 0x80;
+	if (CF == 0) {
+		// 이 처리는, tss->msgbox_status의 첫 시작시에만 한다
+		EDX = tss->softint_Llv;
+		tss->msgbox_status = AL /* 데이터 있음 */;
+		AL = tss->now_Llv;
+		if (DL ! = 0xff) {
+			tss->softint_oldLlv = AL;
+			// tss->softint_Llv가 0xff의 경우, softint_oldLlv도 0xff에 초기화되고 있다
+			if (AL ! = DL) {
+				EDI = EDX;
+				TapiChgLlv(); // EDI에 0~0xfe
+			}
+		}
+	}
+
+	// 메세지의 유무 bit0-3
+	// 시그널 엔트리
+	// CF : bit31
+
+	// 추가 메세지 bit0-1
+	// reserve bit2-3
+	// 네스팅 카운트 증가 bit4
+	// if (nest == 0) softint0를 일으키는 bit5
+	// if (nest == 0) 로컬 레벨 변경 bit6
+	// if (nest == 0) 로컬 레벨 대피 bit7
+	// 대상 태스크 지정 bit30-8
+	// reserve bit31
+
+	// 레벨 체인지 체크
+	TapiFixTsk();
+	(char) [SS:0xfffffff0]--;
+	if (== 0)
+		goto cli_call;
+cli_call2:
+	POPFD();
+	return;
+cli_call:
+	PUSH(EBP);
+	asmout("CALL FAR DWORD PTR SS:[0FFFFFFF8H]"); /* DS 및 reg32를 파괴 */
+	MOV(EAX, CS);
+	POP(EBP);
+	EAX += 8;
+	POPFD();
+	DS = AX;
+	return;
+
+sysmsg:
+	INT(0x03);
+}
+
+void near TAPI_SignalMessage2()
+//	범용 시그널 처리 루틴(write할 수 없을지 wait)
+//	이 버전에서는 메세지
+//	oldLlv에 대입한다
+//  ES:EBP로부터 메세지. EBP는 만져진다.
+{
+	TAPI_WORK *work == DS:0;
+
+	PUSHFD();
+	CLI();
+retry:
+//	asmout("INC BYTE PTR SS:[0FFFFFFE0H]"); // 이것은 불필요. near이니까
+//	asmout("INC BYTE PTR SS:[0FFFFFFF0H]");
+	(char) [SS:0xfffffff0]++;
+
+	TAPI_TSS *tss == DS:ESI;
+
+	EAX = [ES:EBP];
+	TEST(EAX, 0x40000000);
+	if (! = 0)
+		goto sysmsg;
+	EAX &= 0x3ffffff0;
+	(offset) tss = [DS:EAX];
+	// 추가 메세지의 처리
+
+//	reg32 = (offset) tss; // 랩핑을 위해서 값을 보존...sysmsg에는 랩핑은 없다
+/*		sysmsg에서는 랩핑같은 건 없어도, 벡터를 완전하게 컨트롤 할 수 있으므로 문제 없다 */
+	(offset) tss &= 0x7fffff00;
+
+	if (tss->softint_nest == 0) {
+		tss->softint_nest = 0xff; // 끼어들어지면 부의 값이 된다.
+		if ((unsigned) (offset) tss == work->TskPointer) {
+			// system_count(lv0_count)의 플래그를 세운다
+			(int) [SS:0xffffffe0] &= 0xfffffe7f;
+		} else {
+			// 타인의 경우：
+			//	만약, SS의 lv가 0이라면, TAPI_SoftInt0_lv0에 CS:EIP를 고쳐 쓴다
+			//	그렇지 않으면, TAPI_SoftInt0_lv1에 CS:EIP를 고쳐 쓴다...있을 수 없다
+			EAX = tss->tss386.EIP;
+			ECX = (int) tss->tss386.CS;
+			tss->softint_oldEIP = EAX;
+			tss->softint_oldCS  = ECX;
+			tss->tss386.CS = CS /* TAPI CS */;
+			asmout("MOV ECX, OFFSET TAPI_SoftInt1_lv0");
+			tss->tss386.EIP = ECX;
+		}
+	}
+
+	ECX = [ES:EBP];
+	EBP += 4;
+	ECX &= 0x0f; // 반드시 0은 아니다.
+	EDX = tss->msgbox_write_ptr;
+
+	// 메세지 랩핑 처리는 여기에 쓴다(reg32의 플래그를 참조)
+
+//	asmout("LEA EAX,[EDX+ECX*4]");
+	LEA(EAX, [EDX + ECX * 4]);
+	if ((unsigned) EAX >= tss->msgbox_write_ptr1 /* write 상한 주소(rewind를 위해서 4를 뺀다) */) {
+		// 선두에 되돌린다
+		// 버리는 dw수를 계산
+		EAX = tss->msgbox_write_ptr1;
+		EAX -= EDX;
+		EAX /= 4; // EAX == 선두에 되돌리는 것에 의해 소비하는 사이즈(dw단위)
+		tss->msgbox_write_free -= EAX;
+		if ((unsigned) < 0) {
+			tss->msgbox_write_free += EAX;
+			// 다음의 태스크로 전환한다
+	retry2:
+			PUSH(EBP);
+			TapiChangeTsk();
+			TapiFixTsk();
+			(char) [SS:0xfffffff0]--;
+			/* 여기는 반드시 0. 그렇지 않으면 TAPI_SignalMessage2는 CALL하지 말아라 */
+			asmout("CALL FAR DWORD PTR SS:[0FFFFFFF8H]"); /* DS 및 reg32를 파괴 */
+			MOV(EAX, CS);
+			POP(EBP);
+			EAX += 8;
+			EBP -= 4;
+			DS = AX;
+			goto retry;
+		} else {
+			[DS:EDX + 4] = EAX;
+			EAX = tss->msgbox_rewind_code;
+			[DS:EDX] = EAX;
+			EDX = tss->msgbox_write_ptr0;
+			EAX = tss->msgbox_eom_code;
+			tss->msgbox_write_ptr = EDX;
+			(int) [DS:EDX] = EAX;
+		}
+	}
+
+	tss->msgbox_write_free -= ECX;
+	if ((unsigned) < 0) {
+		tss->msgbox_write_free += ECX;
+		// 다음의 태스크로 전환한다
+		goto retry2;
+	}
+
+	do {
+		EAX = [ES:EBP];
+		EBP += 4;
+		[DS:EDX] = EAX;
+		EDX += 4;
+		ECX--;
+	} while (! = 0);
+	tss->msgbox_write_ptr = EDX;
+	EAX = tss->msgbox_eom_code;
+	(int) [DS:EDX] = EAX;
+
+	// msgbox 풀 등의 처리도 랩핑 취급
+
+	AL = tss->msgbox_status;
+	AL += 0x80;
+	if (CF == 0) {
+		// 이 처리는, tss->msgbox_status의 첫 시작시에만 한다
+		EDX = tss->softint_Llv;
+		tss->msgbox_status = AL /* 데이터 있음 */;
+		AL = tss->now_Llv;
+		if (DL ! = 0xff) {
+			tss->softint_oldLlv = AL;
+			// tss->softint_Llv가 0xff의 경우, softint_oldLlv도 0xff에 초기화되고 있다
+			if (AL ! = DL) {
+				EDI = EDX;
+				TapiChgLlv(); // EDI에 0~0xfe
+			}
+		}
+	}
+
+	// 메세지의 유무 bit0-3
+	// 시그널 엔트리
+	// CF : bit31
+
+	// 추가 메세지 bit0-1
+	// reserve bit2-3
+	// 네스팅카운트 증가 bit4
+	// if (nest == 0) softint0를 일으키는 bit5
+	// if (nest == 0) 로컬 레벨 변경 bit6
+	// if (nest == 0) 로컬 레벨 대피 bit7
+	// 대상 태스크 지정 bit30-8
+	// reserve bit31
+
+	/* 레벨 체인지 체크 */
+	TapiFixTsk();
+	(char) [SS:0xfffffff0]--;
+	if (== 0)
+		goto cli_call;
+cli_call2:
+	POPFD();
+	return;
+cli_call:
+	PUSH(EBP);
+	asmout("CALL FAR DWORD PTR SS:[0FFFFFFF8H]"); /* DS 및 reg32를 파괴 */
+	MOV(EAX, CS);
+	POP(EBP);
+	EAX += 8;
+	POPFD();
+	DS = AX;
+	return;
+
+sysmsg:
+	INT(0x03);
+}
+
+
+void far TAPI_SignalMessageTimer()
+//	Timer의 카운트 아웃 시그널 전용
+//	이 버젼에서는, 메세지
+//	oldLlv에 대입한다
+{
+	// 이 주소는, 시스템 밖에서는 CALL되지 않는다. 게이트는 통하지 않다.
+
+	MOV(ECX, DS);
+	PUSH(ES);
+	MOV(EAX, CS);
+	PUSH(ECX);
+	EAX += 8;
+	PUSH(ESI);
+	DS = AX;
+	ES = CX;
+	EBP = ESI;
+	TAPI_SignalMessage();
+	POP(ESI);
+	POP(DS);
+	POP(ES);
+	EBX = [DS:ESI];
+	EAX = [DS:ESI + 20];
+	ECX = [DS:ESI + 24];
+	EDX = [DS:ESI + 28];
+	EBX <<= 1; /* CF세트를 위해서 */
+	return;
+}
+
+// ----------------------------------------------------------------- TAPI Layer-2
+//   제2층：글로벌/이너 레벨의 서포트
+
+//	980719	inner 레벨은 서포트되어 있지 않다. Set의 값으로 그대로 된다.
+//		그 이외의 면에서는 문제 없음.
+
+//	000523	short_run의 서포트
+
+void near TapiFixGlv();
+
+void near TapiRemoveTsk()
+// 동작     : 지정 태스크를 Glv로부터 떼어낸다.
+// 진입 조건 : (struct TAPI_TSS *) DS:ESI, IF = 0
+// 파괴     : EAX, ECX, EDX, EBX
+
+//	되돌리지 않으면 안 되는 정보는, 모두 되돌려진다.
+//	그리고, AddTsk 될 때까지 참조되지 않는다.
+{
+	TAPI_WORK *work == DS:0;
+
+	TAPI_TSS *RmvTss  == DS:ESI, *NowTss  == DS:ECX;
+	TAPI_TSS *NextTss == DS:EAX, *BackTss == DS:ECX;
+	TAPI_GlvPrm *RmvGlv == DS:EDX, *NowGlv == DS:EBX;
+
+//	asmout("#work_GlvStart EQU 010H");
+	asmout("#work_TimerSysCmd EQU 030H");
+//	asmout("#work_TimerCommand_GetTime EQU 058H");
+//	asmout("#work_NowTimeCT EQU 05CH");
+//	asmout("#TS_run EQU 128+16");
+//	asmout("#GP_run EQU 0");
+
+	// Fix가 필요한 조건
+	// (1) 자신이 Remove 되었을 때.
+	// (2) 현재 움직이고 있는 Glv 안에서 inner의 합계가 재분배 필요가 있는 만큼 변화했을 경우.
+
+	// Fix 플래그를 올리려면 ,
+	// (1) 현재 시각을 취득.
+	// (2) 지금 달리고 있는 태스크의 실행 시간을 조정
+
+	// Fix 상태에 관계없이 필요한 작업.
+	// (1) Glv가 변화한다면 Glv 파라미터(parameter)도 갱신(이것은 벌써 Fix 되고 있는 경우에도 한다)
+/*
+asmout("TEST BYTE PTR SS:[0FFFFFFF1H], 02H");
+if (! = 0) {
+	TapiFixOn(); // EAX~EBX를 파괴
+}
+*/
+	if ((unsigned) (offset) RmvTss == work->TskPointer) {
+		asmout("TEST BYTE PTR SS:[0FFFFFFF1H], 02H");
+		if (! = 0) {
+			TapiFixOn(); // EAX~EBX를 파괴
+		}
+	}
+	(offset) RmvGlv = RmvTss->Glv;
+	(offset) NextTss = RmvTss->next;
+	(offset) BackTss = RmvTss->back;
+	NextTss->back = (offset) BackTss;
+	BackTss->next = (offset) NextTss;
+	if ((unsigned) (offset) RmvTss == RmvGlv->pointer) { // 선두라면 다음으로 되돌린다
+		RmvGlv->pointer = (offset) NextTss;
+	}
+	EAX = RmvGlv->tasks;
+	ECX = RmvGlv->totalIlv;
+	EAX--;
+	ECX -= RmvTss->Ilv;
+	RmvGlv->totalIlv = ECX; // InnerLevel를 공제한다
+	RmvGlv->tasks = EAX;  // 소속 태스크수를 줄인다
+
+	// flags == 2 or 3 ... fix의 필요없음
+	// flags == 0 필요성은 알고 있다
+	// flags == 1 ← 이 경우야말로 처리의 필요가 있다.
+
+	if (RmvGlv->flags ! = 1) {
+		return;
+	}
+	if (EAX <= 2)
+		goto flags_on;
+	if ((unsigned) ECX >= RmvGlv->MinIlv)
+		return;
+flags_on:
+	RmvGlv->flags = 0;
+	if ((unsigned) (offset) RmvGlv == work->GlvNow) {
+		asmout("TEST BYTE PTR SS:[0FFFFFFF1H], 02H");
+	//	if (! = 0) {
+	//	//	TapiFixOn(); // EAX~EBX를 파괴
+	//		asmout("JMP TapiFixOn");
+	//	}
+		asmout("JNZ TapiFixOn");
+		// Fix는 하지만 Glv의 변경의 준비는 하지 않는다. 실제 변경하고 있는 것은 아니니까.
+	}
+	return;
+}
+
+void near TapiAddTsk()
+/* 동작     : 지정 태스크를 Glv에 가세한다.
+   진입 조건 : (TAPI_TSS *) DS:ESI, IF = 0
+   파괴     : EAX, ECX, EDX, EBX, EDI */
+{
+	TAPI_WORK *work == DS:0;
+
+	TAPI_TSS *AddTss  == DS:ESI;
+	TAPI_TSS *BackTss == DS:EDX, *NextTss == DS:ECX;
+	TAPI_GlvPrm *AddGlv == DS:EDI;
+
+	// 들어 오는 경우도, 온화한 진입이라면, Fix 하지 않는다.
+	// 온화한 진입이란, Ilv에 문제가 없고 들어 오기 전에 set를 조절하는 태스크의 진입을 말한다.
+
+	// 태스크수가 1이 되기 때문에 새로운 Glv에의 삽입은 검출할 수 있다.
+
+	// 지금 달리고 있는 태스크와 같은 레벨에 들어 오면, 어떻게 할까
+	// Glv->pointer를 갱신하지 않으면 안 된다.
+	// 만약, short_run를 가지고 있으면 자신의 직후.
+	// 자신과 자신을 비교 하는것 같은 일이 되어선 안 된다. 그러니까, TssNow->Glv와 비교해서는 안된다.
+	// 자, work->GlvNow와 비교하면 좋은 것인지?
+	// (1) FixOn 되고 있으면, Glv->pointer의 쓰기 반환은 불필요하다.
+	// (2) FixOn되어 있지 않으면, work->GlvNow는 완전히 신용할 수 있다. TskPointer도 신용할 수 있다.
+	// ···이것으로, 될 것 같다.
+
+/*
+asmout("TEST BYTE PTR SS:[0FFFFFFF1H], 02H");
+if (! = 0) {
+	TapiFixOn(); // EAX~EBX를 파괴
+}
+*/
+	(offset) AddGlv = AddTss->Glv;
+//	asmout("TEST BYTE PTR SS:[0FFFFFFF1H], 02H");
+	TEST((char) [SS:0xfffffff1], 0x02);
+	EAX = AddGlv->tasks;
+	if (! = 0) { // FixOn되어 있지 않다
+		if ((unsigned) (offset) AddGlv == work->GlvNow) {
+			(offset) NextTss = work->TskPointer;
+			CMP((char) AddTss->short_run[11], 0xff);
+		//	DL = 0xff; CMP((char) AddTss->short_run[11], DL);
+			(offset) BackTss = NextTss->back;
+			if (==)
+				goto connect;
+			(offset) NextTss = NextTss->next;
+			(offset) BackTss = work->TskPointer;
+			goto connect;
+		}
+	}
+
+	/* (true) */ if (EAX ! = 0) {
+		(offset) NextTss = AddGlv->pointer;
+		(offset) BackTss = NextTss->back;
+		CMP((char) AddTss->short_run[11], 0xff);
+	//	PUSH(EDX); DL = 0xff; CMP((char) AddTss->short_run[11], DL); POP(EDX);
+		if (! =)
+			AddGlv->pointer = (offset) AddTss;
+connect:
+		AddTss->next = (offset) NextTss;
+		AddTss->back = (offset) BackTss;
+		NextTss->back = (offset) AddTss;
+		BackTss->next = (offset) AddTss;
+	} else {
+		AddGlv->pointer = (offset) AddTss;
+		AddTss->next = (offset) AddTss;
+		AddTss->back = (offset) AddTss;
+	}
+
+	ECX = AddGlv->totalIlv;
+	EAX++;
+	ECX += AddTss->Ilv;
+	AddGlv->totalIlv = ECX; // InnerLevel를 가산
+	AddGlv->tasks = EAX;  // 소속 태스크수를 늘린다
+
+	// flags == 2 or 3 ... fix의 필요없음
+	// flags == 0 필요성은 알고 있다
+	// flags == 1 ← 이 경우야말로 처리할 필요가 있다.
+
+	if (AddGlv->flags == 1) {
+		if ((unsigned) EAX <= 3)
+			goto flags_on;
+		if ((unsigned) ECX <= AddGlv->MaxIlv)
+			return;
+flags_on:
+		AddGlv->flags = 0;
+	}
+	if ((unsigned) (offset) AddGlv > work->GlvNow)
+		return;
+	asmout("TEST BYTE PTR SS:[0FFFFFFF1H], 02H");
+	if (! = 0) {
+		TapiFixOn(); /* ESI ! = work->TskPointer, EAX~EDX의 레지스터는 파괴 가능 */
+	}
+	CMP((offset) AddGlv, work->GlvNow);
+//	if ((unsigned) < ) {
+//		TapiFixGlv(); // 글로벌 레벨 변경(이미 Fix되어 있어도 할 필요가 있다)
+//	}
+	asmout("JB TapiFixGlv");
+	return;
+//	PUSH(EBX);
+//	TapiFixGlv(); // 글로벌 레벨 변경(이미 Fix되어 있어도 할 필요가 있다)
+//	POP(EBX);
+//	work->GlvNow = AddGlv;
+//	return;
+}
+
+void near TapiChangeTsk()
+// 동작     : 지금 움직이고 있는 태스크의 타임 아웃을 기다리지 않고 변경
+// 진입 조건 : IF = 0
+// 파괴     : EAX, ECX, EDX, EBX, ESI
+{
+	TAPI_WORK *work == DS:0;
+
+	TAPI_TSS *NowTss  == DS:ESI, *NextTss  == DS:ECX;
+	TAPI_GlvPrm *NowGlv == DS:EBX;
+
+	(offset) NowTss = work->TskPointer;
+//	asmout("TEST BYTE PTR SS:[0FFFFFFF1H], 02H");
+	TEST((char) [SS:0xfffffff1], 0x02);
+	if (! = 0) {
+		TapiFixOn(); // EAX~EBX를 파괴
+	}
+
+	(offset) NowGlv = NowTss->Glv;
+	(offset) NextTss = NowTss->next;
+	NowGlv->pointer = (offset) NextTss; // 다음의 태스크를 선두에
+	return;
+}
+
+void near TapiFixOn()
+// 타이머의 캔슬도 한다
+// EAX~EBX를 파괴
+// Fix가 On 때, 태스크의 실행 시간을 재계산할 방법이 평상시와 다르다.
+// TskPointer의 값에 관련되지 않고, 모든 태스크 내의 실행 시간은 올바르다.
+{
+	TAPI_WORK *work == DS:0;
+	TAPI_TSS *NowTss  == DS:EBX;
+	TAPI_GlvPrm *NowGlv == DS:EAX;
+
+	asmout("#work_TimerSysCmd EQU 030H");
+
+	(char) [SS:0xfffffff1] &= 0xfd;
+	MOV(EAX, DS);
+	PUSH(FS);
+	FS = AX;
+	if ((unsigned) (char) work->NowTimeCT[11] == 0) {
+	//	EBX = (offset) &(work->TimerCommand_GetTime);
+		LEA(EBX, work->TimerCommand_GetTime);
+		asmout("CALL FAR DWORD PTR DS:[#work_TimerSysCmd]");
+/*
+EDX = work->NowTimeCT[8];
+if (EDX == 0)
+	INT(0x03);
+*/
+	}
+	if (work->TskTimerMode ! = 0 /* 독점 모드는 아니다 */) {
+	//	EBX = (offset) &(work->TimerCommand_Cancel); // 태스크 제어로 사용하고 있는 타이머를 캔슬
+		LEA(EBX, work->TimerCommand_Cancel);
+		asmout("CALL FAR DWORD PTR DS:[#work_TimerSysCmd]");
+		work->TskTimerMode = 0;
+	}
+	POP(FS);
+	(offset) NowTss = work->TskPointer;
+
+	// 실행한 시간의 분만큼, run은 진행한다. short_run에도 Write한다.
+	// short_run에 대해서는, 여기서 체크하지는 않는다.
+	EAX = work->NowTimeCT[0];
+	ECX = work->NowTimeCT[4];
+	EDX = work->NowTimeCT[8];
+	EAX -= work->TskStart[0];
+	SBB(ECX, work->TskStart[4]);
+	SBB(EDX, work->TskStart[8]);
+
+	// 이 시간을 NowTss의 run에 가세해 short_run에 보존한다.
+	NowTss->run[0] += EAX;		NowTss->short_run[0] = EAX;
+	ADC(NowTss->run[4], ECX);	NowTss->short_run[4] = ECX;
+	ADC(NowTss->run[8], EDX);	NowTss->short_run[8] = EDX;
+	CMP(EAX, NowTss->set[0]);
+	(offset) NowGlv = NowTss->Glv;
+	SBB(ECX, NowTss->set[4]);
+	SBB(EDX, NowTss->set[8]);
+	NowGlv->pointer = (offset) NowTss; // 선두에 자리잡는다
+	if ((unsigned) >= 0) {
+		(char) NowTss->short_run[11] = 0xff;
+	}
+	return;
+	// 非시분할의 set는 반드시 0으로 한다. 그러면, 어떠한 실행 시간이라도 short_run는 무효가 된다.
+}
+
+void near TapiFixGlv()
+// EAX~EBX를 파괴
+// work->NowTimeCT를 유효하게 해 두는 것
+{
+	TAPI_WORK *work == DS:0;
+	TAPI_GlvPrm *NowGlv == DS:EBX, *NewGlv == DS:EDI;
+
+	asmout("#work_TimerSysCmd EQU 030H");
+
+/*	asmout("CMP BYTE PTR DS:[#work_NowTimeCT+11], 0");
+	if (==) {
+		AX = DS;
+		PUSH(FS);
+		FS = AX;
+	//	EBX = (offset) &(work->TimerCommand_GetTime);
+		asmout("MOV EBX, #work_TimerCommand_GetTime");
+		asmout("CALL FAR DWORD PTR DS:[#work_TimerSysCmd]");
+		POP(FS);
+	}
+*/	(offset) NowGlv = work->GlvNow;
+	EAX = work->NowTimeCT[0];
+	ECX = work->NowTimeCT[4];	EAX -= work->GlvStart[0];
+	EDX = work->NowTimeCT[8];	SBB(ECX, work->GlvStart[4]);
+	work->GlvNow = (offset) NewGlv;	SBB(EDX, work->GlvStart[8]);
+	NowGlv->run[0] += EAX;		EAX = work->NowTimeCT[0];
+	ADC(NowGlv->run[4], ECX);	ECX = work->NowTimeCT[4];
+	ADC(NowGlv->run[8], EDX);	EDX = work->NowTimeCT[8];
+	work->GlvStart[0] = EAX;
+	work->GlvStart[4] = ECX;
+	work->GlvStart[8] = EDX;
+	return;
+}
+
+void near TapiFixTsk()
+// 동작     : 태스크 프로그램의 정상화/변환.
+// 진입 조건 : IF = 0
+// 파괴     : EAX, ECX, EDX, EBX, EDI, EBP
+{
+	TAPI_WORK *work == DS:0;
+
+	TAPI_TSS *NextTss == DS:EBX;
+	TAPI_GlvPrm *NowGlv == DS:EDI;
+	int *TskTimer == FS:EDI;
+
+	asmout("#work_TimerSysCmd EQU 030H");
+	asmout("#work_TimerNodeTimePtr EQU 038H");
+//	asmout("#TS_short_run EQU 0F0H");
+	asmout("#GP_flags EQU 020H");
+
+//	asmout("TEST BYTE PTR SS:[0FFFFFFF1H], 02H");
+	TEST((char) [SS:0xfffffff1], 0x02);
+	if (! = 0) {
+		(char) work->NowTimeCT[11] = 0;
+	        return;
+	}
+	AL = [SS:0xfffffff0];
+	AL &= 0x7f;
+	/* (false) */ if (! = 0 /* 인터럽트 처리중이다 */) {
+		[SS:0xfffffff0] = AL;
+	        return;
+	}
+
+asmout("TAPI_FixMain: EQU $");
+FixMain:
+//if ((unsigned) (char) work->NowTimeCT[11] == 0)
+//	INT(0x03);
+
+	// Glv의 검색
+	(offset) NowGlv = work->GlvNow;
+	(char) [SS:0xfffffff1] |= 0x03; // 플래그를 내린다(TimeOut도 내린다)
+	if (NowGlv->tasks == 0) {
+		do {
+			(offset) NowGlv += sizeof(TAPI_GlvPrm);
+		} while (NowGlv->tasks == 0);
+		TapiFixGlv();
+	//	work->GlvNow = (offset) NowGlv; // TapiFixGlv()에 내포 되고 있다
+	}
+	/* TEST(NowGlv->flags, 0x03); */ asmout("TEST BYTE PTR DS:[EDI+#GP_flags], 3");
+	if (== 0 /* 이 레벨은 Fix 하고 있지 않고, Fix의 필요가 있다 */) {
+		NowGlv->flags = 1 /* |= 0x01 */;
+		// 여러 가지 한다.
+		// 태스크 마다 플래그를 확인하지 않는 사양이 되었다.
+		// 그러나, short_run는 그 때의 Ilv로 조절되고 있으므로,
+	}
+	(offset) NextTss = NowGlv->pointer;
+	EAX = work->NowTimeCT[0];
+	ECX = work->NowTimeCT[4];
+	EDX = work->NowTimeCT[8];
+//if (EDX == 0)		// 마음껏 히트 한다. 최초부터 안된 것 같다.
+//	INT(0x03);
+	work->TskStart[0] = EAX; // 태스크 개시 시간
+	work->TskStart[4] = ECX;
+	work->TskStart[8] = EDX;
+	(char) work->NowTimeCT[11] = 0;
+//	work->TskTimerMode = 0;
+	EBP = work->TskPointer;
+	TEST(NowGlv->flags, 0x02); /* asmout("TEST BYTE PTR DS:[EDI+#GP_flags], 2"); */
+	work->TskPointer = (offset) NextTss;
+	if (== 0 /* 시분할을 한다 */) {
+		if (NowGlv->tasks ! = 1 /* 태스크는 1개 뿐만이 아니다 */) {
+			PUSH(FS);
+			work->TskTimerMode = 1;
+		//	TskTimer = work->TimerNodeTimePtr;
+			asmout("LFS EDI, DWORD PTR DS:[#work_TimerNodeTimePtr]");
+			EAX += NextTss->set[0]; // 인터럽트를 일으킬 시각을 설정
+			ADC(ECX, NextTss->set[4]);
+			ADC(EDX, NextTss->set[8]);
+//if (== 0)
+//	INT(0x03);
+			CMP((char) NextTss->short_run[11], 0xff);
+		//	PUSH(EDX); DL = 0xff; CMP((char) NextTss->short_run[11], DL); POP(EDX);
+			if (! =) {
+				EAX -= NextTss->short_run[0]; // 인터럽트를 일으킬 시각을 설정
+				SBB(ECX, NextTss->short_run[4]);
+				SBB(EDX, NextTss->short_run[8]);
+			}
+			TskTimer[0] = EAX;
+			TskTimer[4] = ECX;
+			TskTimer[8] = EDX;
+			MOV(EAX, DS);
+		//	EBX = (offset) &(work->TimerCommand_Regist); // 태스크 제어로 사용하고 있는 타이머를 캔슬
+		//	asmout("MOV EBX, #work_TimerCommand_Regist");
+			LEA(EBX, work->TimerCommand_Regist);
+			FS = AX;
+
+			/* 이것을 부르기 전에, work->TskPointer를 갱신하지 않으면 안 된다.  */
+			asmout("CALL FAR DWORD PTR DS:[#work_TimerSysCmd]");
+			(offset) NextTss = work->TskPointer;
+			POP(FS);
+		}
+	}
+	if ((unsigned) (offset) NextTss ! = EBP) {
+	//	goto *((void far *()) NextTss->Tr[-4]);   /* 태스크 변환 */
+		asmout("JMP FAR DWORD PTR DS:[EBX+128+8]");
+	}
+	return;
+}
+
+
+// ----------------------------------------------------------------- TAPI Layer-3
+//   제3층：로컬 레벨의 서포트
+
+//	980719	완성하고 있다.
+
+void near TapiChgLlv()
+/* 동작     : LocalLevel의 변경.
+   진입 조건 : IF = 0, (struct Tss near *) ESI, (struct LlvPrm near *) EDI
+   파괴     : EAX, ECX, EDX, EBX, EDI */
+{
+	TAPI_WORK *work == DS:0;
+
+	TAPI_TSS *ObjTss == DS:ESI;
+	TAPI_LlvPrm *New == DS:EDI, *Old == DS:EBX;
+
+//	asmout("#work_TskStart EQU 000H");
+//	asmout("#work_TimerSysCmd EQU 030H");
+//	asmout("#work_TimerCommand_GetTime EQU 058H");
+//	asmout("#work_NowTimeCT EQU 05CH");
+//	asmout("#TS_set EQU 080H");
+//	asmout("#LP_short_run EQU 010H");
+
+	TapiRemoveTsk(); /* broken : EAX, ECX, EDX, EBX */
+	(offset) Old = ObjTss->Llv;  /* run의 반환 */
+	EDX = EDI;
+	EDI *= 32;
+	ObjTss->now_Llv = DL;
+	EDI += ObjTss->Llv_base;
+	EAX = ObjTss->run[0];
+	ECX = ObjTss->run[4];
+	EDX = ObjTss->run[8];
+	Old->run[0] = EAX;
+	Old->run[4] = ECX;
+	Old->run[8] = EDX;
+	EAX = ObjTss->short_run[0];
+	ECX = ObjTss->short_run[4];
+	EDX = ObjTss->short_run[8];
+	Old->short_run[0] = EAX;
+	Old->short_run[4] = ECX;
+	Old->short_run[8] = EDX;
+
+	/* 신레벨 정보의 write */
+	EAX = New->run[0];
+	ECX = New->run[4];
+	EDX = New->run[8];
+	ObjTss->run[0] = EAX;
+	ObjTss->run[4] = ECX;
+	ObjTss->run[8] = EDX;
+	EAX = New->short_run[0];
+	ECX = New->short_run[4];
+	EDX = New->short_run[8];
+	ObjTss->short_run[0] = EAX;
+	ObjTss->short_run[4] = ECX;
+	ObjTss->short_run[8] = EDX;
+	EAX = New->Glv;
+	ECX = New->Ilv;
+	ObjTss->Glv = EAX;
+	ObjTss->Llv = (offset) New;
+	ObjTss->Ilv = ECX;
+
+	/* set를 설정한다(사실은 Glv를 참조해 결정한다) */
+	ObjTss->set[0] = ECX /* == Ilv */;
+
+//	(jmp near) goto TapiAddTskCT; // broken : EAX, ECX, EDX, EBX, EDI
+	asmout("JMP TapiAddTsk");
+}
+
+void near TAPI_AddNestSleep()
+// EAX는 nest 증가량
+// ECX는 msgbox_write_free 증가량
+// 이 루틴은, nest가 조건을 채우지 않으면 TapiChgLlv의 직후에 인터럽트 처리를 한다
+// EDX는 0~255(Llv) : 0xff는 변경하지 않는 것을 의미한다
+{
+	PUSHFD();
+//	PUSHAD();
+//	BX = CS;
+//	PUSH(DS);
+//	BX += 8;
+//	DS = BX;
+	TAPI_WORK *work == DS:0;
+	TAPI_TSS *tss == DS:ESI;
+
+	CLI();
+	(offset) tss = work->TskPointer;
+	EBX = tss->msgbox_write_ptr1;
+	tss->msgbox_write_free += ECX;
+	EBX -= tss->msgbox_write_ptr0;
+	EBX /= 4;
+	EBX--; /* EOM의 분 */
+	if (EBX == tss->msgbox_write_free) {
+		tss->msgbox_status &= 0x7f;
+	}
+//	EDX = (int) [SS:ESP + 24 /* old EDX */];
+	tss->softint_nest += AL;
+	if (== 0) {
+		TEST(tss->msgbox_status, 0x80); /* bit7:데이터 존재 bit */
+	//	AL = tss->msgbox_status; TEST(AL, 0x80);
+		if (! = 0) {
+		//	(char) [SS:0xffffffe0]++;
+		//	(char) [SS:0xfffffff0]++;
+
+		//	데이터가 write되고 있다는 것은, 이미 softint_Llv에
+		//	되어 있다고 하는 것은 아닌 것인지?
+		//	oldLlv를 갱신하는 것은 좋지만 현재의 레벨을 기록하는 것은 의미가 없다
+
+			// oldLlv를 EDX로서 인터럽트 처리를 한다
+			tss->softint_nest = 0xff;
+			if (DL ! = 0xff) {
+				tss->softint_oldLlv = DL;
+			}
+		//	EDI = tss->softint_Llv; // 일반적으로, 이 때가 가장 빠르다(물론, 태스크 변환이 억제되고 있으면 좀 더 빠르겠지만).
+		//	EAX = tss->Llv;
+		//	if (EDI ! = 0) {
+		//		if (EAX ! = EDI) /* 로컬 레벨 변경 */ {
+		//			TapiChgLlv();
+		//			TapiFixTsk();
+		//		}
+		//	}
+			// softint 처리
+		//	DL = tss->softint_mode;
+		//	TEST(DL, 0x03);
+		//	if (! = 0) {
+			//	TEST(DL, 0x01);
+			//	if (! = 0) {
+			//		// 자신의 경우：
+			//		//	cli_count가 0이라면, 곧바로 인터럽트된다
+			//		//	cli_count가 0이 아니면(타이머라면 0이 아니다), 플래그를 세울 뿐
+			//		// 플래그를 세운다.
+			//		asmout("AND DWORD PTR SS:[0FFFFFFF0H], 0FFFFFB7FH");
+			//		INT(0x03); // cli_count를 반영 되어 있지 않다
+			//	} else {
+					// system_count(lv0_count)의 플래그를 세운다
+					(int) [SS:0xffffffe0] &= 0xfffffe7f;
+			//	}
+		//	}
+		//	(char) [SS:0xfffffff0]--;
+		//	if (== 0) {
+		//		asmout("CALL FAR DWORD PTR SS:[0FFFFFFF8H]");
+		//	}
+		//	(char) [SS:0xffffffe0]--;
+		//	if (== 0) {
+		//		POP(DS);
+		//		POPAD();
+		//		PUSHFD();
+		//		(int) [SS:ESP] |= 0x0200; // ZF == 0
+		//		asmout("jmp_system_count0");
+		//	}
+		//	POP(DS);
+		//	POPAD();
+			POPFD();
+			return;
+		}
+
+	}
+
+	// 시그널이 모여 있을 때는 레벨 체인지를 인정하지 않는다
+	TEST(tss->msgbox_status, 0xc0);
+//	AL = tss->msgbox_status; TEST(AL, 0xc0);
+	if (== 0) {
+		if (DL ! = 0xff) {
+			EDX &= 0xff;
+			EDI = EDX;
+			TapiChgLlv();
+			TapiFixTsk();
+		}
+	}
+//	POP(DS);
+//	POPAD();
+	POPFD();
+	return;
+}
+
+//	마스크를 내려 만약 메시지 박스에 메세지가 모여 있으면 시그널을 일으킨다···그러한 루틴을 갖고 싶다.
+
+void near TAPI_Softint1Ret()
+{
+	TAPI_WORK *work == DS:0;
+	TAPI_TSS *tss == DS:ESI;
+
+	CLI();
+	(offset) tss = work->TskPointer;
+	EDI = tss->msgbox_write_ptr1;
+	tss->msgbox_write_free += ECX;
+	EDI -= tss->msgbox_write_ptr0;
+	EDI /= 4;
+	EDI--; /* EOM의 분 */
+	if (EDI == tss->msgbox_write_free) {
+		tss->msgbox_status &= 0x7f;
+	}
+	tss->softint_nest += AL;
+	if (== 0) {
+	//	AL = tss->msgbox_status; TEST(AL, 0x80);
+		TEST(tss->msgbox_status, 0x80);
+		if (! = 0) {
+			tss->softint_nest = 0xff;
+			(int) [SS:0xffffffe0] &= 0xfffffc7f; // 리턴 & 분기
+			STI();
+			return;
+		}
+	}
+
+	(int) [SS:0xffffffe0] &= 0xfffffd7f; // 리턴 한다
+	STI();
+	return;
+}
+
+void far TAPI_INT07()
+{
+	TAPI_WORK *work == DS:0;
+	TAPI_TSS *tss == DS:EAX;
+
+	PUSH(EAX);
+	MOV(EAX, CS);
+	PUSH(DS);
+	EAX += 8;
+	PUSH(ECX);
+	DS = AX;
+	(offset) tss = work->TskPointer;
+	CLTS();
+	ECX = work->taskFPU;
+	EAX = tss->fpu_reg_img;
+	if (EAX ! = ECX) {
+		if (ECX ! = 0) {
+			asmout("FNSAVE DS:[ECX]");
+		}
+		work->taskFPU = EAX;
+		asmout("FRSTOR DS:[EAX]");
+	}
+
+	POP(ECX);
+	POP(DS);
+	POP(EAX);
+	IRETD();
+}
+

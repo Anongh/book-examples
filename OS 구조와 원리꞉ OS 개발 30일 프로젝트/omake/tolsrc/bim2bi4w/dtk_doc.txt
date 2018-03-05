@@ -1,0 +1,72 @@
+dtk 라이브러리에 대한 간단한 설명.
+
+구성：
+    dtk1s0c : tek1 sub set(stk1) 대응 전개 루틴 C판
+    dtk1s0s : tek1 sub set(stk1) 대응 전개 루틴 ASKA판
+    dtk2s0f : tek2 sub set(stk2) 대응 전개 루틴 C판
+    dtk2s0r : tek2 sub set(stk2) 대응 전개 루틴 ASKA판
+    dtk5f0d : tek5 full set 대응 전개 루틴 C판
+    dtk5f0r : tek5 full set 대응 전개 루틴 ASKA판
+    dtk5s0d : tek5 sub set(stk5) 대응 전개 루틴 C판
+    dtk5s0r : tek5 sub set(stk5) 대응 전개 루틴 ASKA판
+
+  모두 OSACMP 형식에서 압축된 메모리상의 데이터를 메모리상에 전개하기 위한 것
+입니다.
+
+  full set용의 루틴에서는 물론 sub set의 데이터도 전개할 수 있습니다.
+
+  라이브러리는 모두 dtk**.c나 dtk**.ask만으로, 그 외는 샘플을 위한 것입니다. 
+함수는 모두 이 2개가 준비되어 있습니다.
+
+/* 라이브러리를 서포트할 수 있는 포맷일까의 간이 체크 */
+int tek_checkformat(int siz, UCHAR *p); /* 전개 후의 사이즈를 돌려준다 */
+	/* -1:비osacmp */
+	/* -2:osacmp이지만 대응할 수 없다 */
+
+/* 실제 전개 작업 */
+int tek_decode(int siz, UCHAR *p, UCHAR *q); /* 성공하면(자) 0 */
+	/* +의 값은 포맷 이상·미대응, -의 값은 메모리 부족 */
+
+  추가로 UCHAR는 unsigned char, p는 압축 데이터가 저장되고 있는 포인터.
+    siz는 압축된 데이터 사이즈, q는 전개처입니다.
+
+  전개 후의 사이즈를 모르면 곤란한 경우가 있을텐데, 그것은 tek_checkformat
+으로 취득할 수 있습니다.
+
+  추천 되는 방법으로는, 파일을 읽어들인 후에 tek_checkformat로 테스트하여, 
+만약―1이 리턴되면 압축이 걸려있지 않기 때문에 그대로 이용하고, 0이상의 값이 리턴되면
+tek_decode로 전개한 결과를 이용하는 것입니다. 이것으로 압축
+의 유무를 의식하지 않고 이용을 할 수 있게 됩니다.
+
+---
+
+  C판은 알고리즘을 솔직하게 작성하는 느낌이고, ASKA판은 전개 속도가 빨라지도록
+연구를 하고 있습니다. 이식성이 문제가 되는 것이 아니라면, ASKA판의 이용을 추천합니다.
+
+  ASKA판의 이용에는 ASKA가 필요하다고 생각되기 쉽상입니다만, 그렇지 않습니다. 컴파일이
+끝난 오브젝트 파일이 있기 때문에, 링크 시에 사용하면 될 뿐입니다. 오브젝트 파일은,
+IA-32용의 COFF(win32 호환의 것으로, 본래의 엄밀한 의미의 COFF와는 조금 다르다)입니다. 
+아마 x86용의 Linux등으로도 그대로 사용할 수 있지 않을까 생각됩니다.
+
+  덧붙여서 ASKA판은 모두 malloc을 하지 않고, 필요한 워크 에리어는 스택으로부터 취하고 있습니다.
+
+  마지막에 ASKA판과 C판으로, 어느 정도의 성능 차이가 있는지를 나타냅니다.
+      (테스트 머신：EPIA-VE5000)
+
+    테스트 대상：make46.sar  (OSASK ver. 4.6의 소스 아카이브(archive), tek5)
+
+      dtk5f0d (full set C판)   : 0.88[sec]
+      dtk5f0r (full set ASKA판): 0.56[sec] (1.57배)
+      (참고) bim2bin -restore    : 0.91[sec]
+
+    테스트 대상：make46s.sar  (OSASK ver. 4.6의 소스 아카이브(archive), stk5)
+
+      dtk5f0d (full set C판)   : 0.77[sec]
+      dtk5f0r (full set ASKA판): 0.29[sec] (2.66배)
+      dtk5s0d (sub set C판)   : 0.47[sec]
+      dtk5s0r (sub set ASKA판): 0.29[sec] (1.62배)
+      (참고) bim2bin -restore    : 0.81[sec]
+
+  (bim2bin의―restore는 쓸데없는 처리를 하고 있으므로 느립니다. )
+
+  tek5의 전개가 stk5에 비하면 꽤 느립니다만, 개조하면 좀 더 빨라진다고 생각합니다.
